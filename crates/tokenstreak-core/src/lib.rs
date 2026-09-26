@@ -21,6 +21,7 @@ pub mod engine;
 pub mod goals;
 pub mod mock;
 pub mod model;
+pub mod notify;
 pub mod pricing;
 pub mod readers;
 pub mod report;

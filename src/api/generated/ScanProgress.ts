@@ -3,4 +3,8 @@
 /**
  * Progress of a scan (`scan-progress` event).
  */
-export type ScanProgress = { phase: string, filesDone: number, filesTotal: number, };
+export type ScanProgress = { 
+/**
+ * `"initial"` while the first scan streams partial results, `"done"` at the end.
+ */
+phase: string, filesDone: number, filesTotal: number, bytesDone: number, bytesTotal: number, };

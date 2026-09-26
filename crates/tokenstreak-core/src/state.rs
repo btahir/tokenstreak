@@ -27,6 +27,10 @@ pub struct AppState {
     /// Achievement ids the UI has shown.
     pub seen_achievements: BTreeSet<String>,
     pub prices_updated_at: Option<String>,
+    /// Last local date a goal-reached notification was sent.
+    pub goal_notified_on: Option<String>,
+    /// Last local date the streak-at-risk reminder was sent.
+    pub at_risk_notified_on: Option<String>,
 }
 
 pub struct Store {

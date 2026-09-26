@@ -26,6 +26,8 @@ pub struct ScanReport {
     pub reparsed: usize,
     pub removed: usize,
     pub bytes_read: u64,
+    /// Files that exist but could not be read (permissions, races).
+    pub unreadable: usize,
     pub elapsed_ms: u128,
 }
 
@@ -49,6 +51,112 @@ pub struct Engine {
     cache_dirty: bool,
     persist_enabled: bool,
     now_override: Option<i64>,
+    /// A progressive first scan is running (see [`ScanPlan`]).
+    progressive: bool,
+    /// Follow system time-zone changes (app engines without a pinned zone).
+    follow_system_tz: bool,
+    last_unreadable: usize,
+}
+
+/// A first scan split into batches, most recently modified files first, so
+/// the UI can show today and recent days while older history is still being
+/// parsed. Records are parsed without the engine (and its lock); each batch
+/// is then absorbed and the ledger rebuilt.
+pub struct ScanPlan {
+    order: FxHashMap<PathBuf, usize>,
+    /// Pending records, least recent first (batches pop from the end).
+    pending: Vec<(u64, FileRecord)>,
+    budget: u64,
+    pub files_total: u32,
+    pub files_done: u32,
+    pub bytes_total: u64,
+    pub bytes_done: u64,
+    report: ScanReport,
+    t0: Instant,
+}
+
+impl ScanPlan {
+    /// The next batch: the most recent pending files up to the current byte
+    /// budget (at least one file). The budget grows 4x per batch, so a
+    /// 17 GB history takes about seven batches.
+    pub fn next_batch(&mut self) -> Option<Vec<FileRecord>> {
+        if self.pending.is_empty() {
+            return None;
+        }
+        let mut batch = Vec::new();
+        let mut bytes = 0u64;
+        while let Some((size, _)) = self.pending.last() {
+            if !batch.is_empty() && bytes + size > self.budget {
+                break;
+            }
+            bytes += size;
+            if let Some((_, rec)) = self.pending.pop() {
+                batch.push(rec);
+            }
+        }
+        self.budget = self.budget.saturating_mul(4);
+        self.files_done += batch.len() as u32;
+        self.bytes_done += bytes;
+        Some(batch)
+    }
+
+    pub fn is_done(&self) -> bool {
+        self.pending.is_empty()
+    }
+
+    /// Overrides the first batch's byte budget (tests use tiny batches).
+    pub fn set_initial_budget(&mut self, bytes: u64) {
+        self.budget = bytes.max(1);
+    }
+
+    pub fn progress(&self, phase: &str) -> ScanProgress {
+        ScanProgress {
+            phase: phase.into(),
+            files_done: self.files_done,
+            files_total: self.files_total,
+            bytes_done: self.bytes_done,
+            bytes_total: self.bytes_total,
+        }
+    }
+}
+
+/// Parses (or incrementally updates) records in parallel. Needs no engine,
+/// so callers can run it without holding the engine lock.
+pub fn parse_records(records: &mut [FileRecord]) -> ScanReport {
+    let before: u64 = records.iter().map(|r| r.offset).sum();
+    let update = |rec: &mut FileRecord| -> Option<UpdateKind> {
+        let st = readers::stamp(&rec.path)?;
+        match readers::update_record(rec, st) {
+            Ok(k) => Some(k),
+            Err(e) => {
+                tracing::debug!(kind = ?e.kind(), "log file unreadable");
+                None
+            }
+        }
+    };
+    // A short-lived pool: its threads (and their allocator caches) exit
+    // after the scan, so a big first scan leaves no memory behind.
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8);
+    let results: Vec<Option<UpdateKind>> = match rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .thread_name(|i| format!("tokenstreak-scan-{i}"))
+        .build()
+    {
+        Ok(pool) => pool.install(|| records.par_iter_mut().map(update).collect()),
+        Err(_) => records.iter_mut().map(update).collect(),
+    };
+    let mut report = ScanReport { files: records.len(), ..Default::default() };
+    for r in &results {
+        match r {
+            Some(UpdateKind::Appended) => report.appended += 1,
+            Some(UpdateKind::Reparsed) => report.reparsed += 1,
+            Some(UpdateKind::Unchanged) => {}
+            None => report.unreadable += 1,
+        }
+    }
+    let after: u64 = records.iter().map(|r| r.offset).sum();
+    report.bytes_read = after.saturating_sub(before);
+    report
 }
 
 impl Engine {
@@ -85,6 +193,9 @@ impl Engine {
             cache_dirty: false,
             persist_enabled: true,
             now_override: None,
+            progressive: false,
+            follow_system_tz: true,
+            last_unreadable: 0,
         };
         e.roots = e.source_config().roots();
         e.status.initial_scan = e.files.is_empty();
@@ -109,6 +220,9 @@ impl Engine {
             cache_dirty: false,
             persist_enabled: false,
             now_override: None,
+            progressive: false,
+            follow_system_tz: false,
+            last_unreadable: 0,
         };
         e.roots = e.source_config().roots();
         e
@@ -181,6 +295,10 @@ impl Engine {
 
     /// Discovers files and parses whatever changed since the last scan.
     pub fn scan(&mut self) -> ScanReport {
+        if self.progressive {
+            // The running first scan owns the file list; the worker rescans after it.
+            return ScanReport::default();
+        }
         let t0 = Instant::now();
         self.roots = self.source_config().roots();
         let discovered = readers::discover(&self.roots);
@@ -195,32 +313,13 @@ impl Engine {
             rec.rel = d.rel.clone();
             next.push(rec);
         }
-        let before_bytes: u64 = next.iter().map(|r| r.offset).sum();
-        let update = |rec: &mut FileRecord| {
-            let st = readers::stamp(&rec.path)?;
-            readers::update_record(rec, st).ok()
-        };
-        // A short-lived pool: its threads (and their allocator caches) exit
-        // after the scan, so a big first scan leaves no memory behind.
-        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8);
-        let results: Vec<Option<UpdateKind>> = match rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .thread_name(|i| format!("tokenstreak-scan-{i}"))
-            .build()
-        {
-            Ok(pool) => pool.install(|| next.par_iter_mut().map(update).collect()),
-            Err(_) => next.iter_mut().map(update).collect(),
-        };
-        let mut report = ScanReport { files: next.len(), ..Default::default() };
-        for r in results.into_iter().flatten() {
-            match r {
-                UpdateKind::Appended => report.appended += 1,
-                UpdateKind::Reparsed => report.reparsed += 1,
-                UpdateKind::Unchanged => {}
+        let mut report = parse_records(&mut next);
+        if report.unreadable != self.last_unreadable {
+            self.last_unreadable = report.unreadable;
+            if report.unreadable > 0 {
+                tracing::warn!(files = report.unreadable, "some log files could not be read");
             }
         }
-        let after_bytes: u64 = next.iter().map(|r| r.offset).sum();
-        report.bytes_read = after_bytes.saturating_sub(before_bytes);
         // Files that disappeared: keep their history unless told otherwise.
         let mut missing: Vec<FileRecord> = by_path.into_values().collect();
         missing.sort_by(|a, b| a.path.cmp(&b.path));
@@ -269,6 +368,118 @@ impl Engine {
         self.status.initial_scan = false;
         self.persist();
         r
+    }
+
+    /// Follows a change of the system time zone (travel, manual change) when
+    /// no zone is pinned in settings: dates are re-bucketed in the new zone.
+    /// jiff re-reads the system zone at most every 5 minutes. Returns true
+    /// when the zone changed.
+    pub fn check_system_timezone(&mut self) -> bool {
+        if !self.follow_system_tz || self.settings.timezone.is_some() {
+            return false;
+        }
+        let now = Clock::system();
+        if now.tz == self.clock.tz {
+            return false;
+        }
+        tracing::info!(from = %self.clock.name(), to = %now.name(), "system time zone changed");
+        self.clock = now;
+        self.rebuild();
+        true
+    }
+
+    /// Test hook: pretend the engine was built for another zone.
+    #[doc(hidden)]
+    pub fn set_clock_for_test(&mut self, clock: Clock, follow_system: bool) {
+        self.clock = clock;
+        self.follow_system_tz = follow_system;
+        self.rebuild();
+    }
+
+    /// True when there is no cached history, so the next scan reads
+    /// everything and should run progressively.
+    pub fn wants_progressive_scan(&self) -> bool {
+        self.files.is_empty() && !self.progressive
+    }
+
+    /// Starts a progressive first scan (see [`ScanPlan`]).
+    pub fn begin_progressive_scan(&mut self) -> ScanPlan {
+        let t0 = Instant::now();
+        self.roots = self.source_config().roots();
+        let discovered = readers::discover(&self.roots);
+        let mut order = FxHashMap::default();
+        let mut pending = Vec::with_capacity(discovered.len());
+        for (i, d) in discovered.iter().enumerate() {
+            order.insert(d.path.clone(), i);
+            let st = readers::stamp(&d.path);
+            let size = st.map(|s| s.size).unwrap_or(0);
+            let mtime = st.map(|s| s.mtime_ns).unwrap_or(0);
+            pending.push((mtime, size, FileRecord::new(d.tool, d.path.clone(), d.rel.clone(), d.root)));
+        }
+        pending.sort_by_key(|(mtime, _, _)| *mtime);
+        let bytes_total = pending.iter().map(|(_, s, _)| *s).sum();
+        // Keep whatever is already known (normally nothing).
+        self.progressive = true;
+        self.status.initial_scan = true;
+        ScanPlan {
+            order,
+            files_total: pending.len() as u32,
+            pending: pending.into_iter().map(|(_, s, r)| (s, r)).collect(),
+            budget: 32 * 1024 * 1024,
+            files_done: 0,
+            bytes_total,
+            bytes_done: 0,
+            report: ScanReport::default(),
+            t0,
+        }
+    }
+
+    /// Adds a parsed batch and rebuilds the ledger (a partial view).
+    pub fn absorb_batch(&mut self, plan: &mut ScanPlan, batch: Vec<FileRecord>, report: ScanReport) {
+        plan.report.files += report.files;
+        plan.report.reparsed += report.reparsed + report.appended;
+        plan.report.bytes_read += report.bytes_read;
+        plan.report.unreadable += report.unreadable;
+        self.files.extend(batch);
+        self.rebuild();
+    }
+
+    /// Finishes a progressive scan: restores discovery order (dedup is
+    /// order-sensitive, like ccusage), rebuilds and persists.
+    pub fn finish_progressive_scan(&mut self, plan: ScanPlan) -> ScanReport {
+        let order = plan.order;
+        self.files.sort_by_key(|f| order.get(&f.path).copied().unwrap_or(usize::MAX));
+        self.progressive = false;
+        self.status.initial_scan = false;
+        self.rebuild();
+        let mut report = plan.report;
+        report.elapsed_ms = plan.t0.elapsed().as_millis();
+        if report.unreadable > 0 {
+            tracing::warn!(files = report.unreadable, "some log files could not be read");
+        }
+        if report.bytes_read > 64 * 1024 * 1024 {
+            release_memory();
+        }
+        self.cache_dirty = true;
+        self.status.last_scan_at = Some(crate::time::format_rfc3339_ms(self.now_ms()));
+        self.status.last_scan_ms = report.elapsed_ms as u32;
+        self.persist();
+        report
+    }
+
+    /// Runs a whole progressive scan in place (CLI and tests); `on_batch`
+    /// sees the engine after each partial rebuild.
+    pub fn refresh_progressive(&mut self, mut on_batch: impl FnMut(&Engine, &ScanProgress)) -> ScanReport {
+        let mut plan = self.begin_progressive_scan();
+        while let Some(mut batch) = plan.next_batch() {
+            let r = parse_records(&mut batch);
+            self.absorb_batch(&mut plan, batch, r);
+            if !plan.is_done() {
+                let p = plan.progress("initial");
+                on_batch(self, &p);
+            }
+        }
+        self.finish_progressive_scan(plan)
     }
 
     pub fn set_watching(&mut self, on: bool) {
@@ -429,6 +640,11 @@ impl Engine {
         }
         // Everything already unlocked by history is part of the reveal, not "new".
         self.sync_unlocks();
+        // A goal already met today is part of the reveal too: no notification.
+        let snap = self.snapshot();
+        if snap.today.met {
+            self.state.goal_notified_on = Some(snap.today.date.clone());
+        }
         self.persist();
         Ok(())
     }
@@ -465,6 +681,35 @@ impl Engine {
             }
         }
         fresh
+    }
+
+    /// A goal-reached notification that is due now; marks it as sent.
+    pub fn take_goal_notice(&mut self, snap: &AppSnapshot) -> Option<crate::notify::GoalNotice> {
+        let now = crate::notify::Now::at(&self.clock, self.now_ms());
+        let n = crate::notify::goal_notice(snap, &self.settings, &self.state, now)?;
+        self.state.goal_notified_on = Some(snap.today.date.clone());
+        self.persist();
+        Some(n)
+    }
+
+    /// A streak-at-risk reminder that is due now; marks it as sent.
+    pub fn take_at_risk_notice(&mut self, snap: &AppSnapshot) -> Option<crate::notify::AtRiskNotice> {
+        let now = crate::notify::Now::at(&self.clock, self.now_ms());
+        let n = crate::notify::at_risk_notice(snap, &self.settings, &self.state, now)?;
+        self.state.at_risk_notified_on = Some(snap.today.date.clone());
+        self.persist();
+        Some(n)
+    }
+
+    /// Whether notifications are muted right now (quiet hours).
+    pub fn in_quiet_hours(&self) -> bool {
+        let now = crate::notify::Now::at(&self.clock, self.now_ms());
+        crate::notify::in_quiet_hours(&self.settings.notifications.quiet_hours, now.minute)
+    }
+
+    /// Milliseconds until the streak-at-risk reminder should be evaluated.
+    pub fn ms_until_reminder(&self, snap: &AppSnapshot) -> Option<i64> {
+        crate::notify::ms_until_reminder(snap, &self.settings, &self.state, &self.clock, self.now_ms())
     }
 
     /// Replaces the price list with a fresh download (the only network call).

@@ -151,6 +151,24 @@ impl Clock {
         }
     }
 
+    /// Local minutes since midnight (0..1440) of an instant.
+    pub fn minute_of_day(&self, ms: i64) -> u16 {
+        match Timestamp::from_millisecond(ms) {
+            Ok(ts) => {
+                let z = ts.to_zoned(self.tz.clone());
+                z.hour() as u16 * 60 + z.minute() as u16
+            }
+            Err(_) => 0,
+        }
+    }
+
+    /// The instant of local `minute` (minutes since midnight) on `date`
+    /// (the first valid instant after a DST gap).
+    pub fn instant_at(&self, date: Date, minute: u16) -> Option<i64> {
+        let dt = date.at((minute / 60) as i8, (minute % 60) as i8, 0, 0);
+        dt.to_zoned(self.tz.clone()).ok().map(|z| z.timestamp().as_millisecond())
+    }
+
     pub fn now_ms(&self) -> i64 {
         Timestamp::now().as_millisecond()
     }

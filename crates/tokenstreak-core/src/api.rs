@@ -501,13 +501,42 @@ impl Default for ToolSettings {
 pub struct NotificationSettings {
     pub goal_reached: bool,
     pub achievements: bool,
-    /// Evening nudge when a streak is at risk (off by default).
+    /// Evening nudge when a streak is at risk (off by default). Fires at most
+    /// once a day, at or after `reminderTime`, never on rest days or in quiet hours.
     pub streak_at_risk: bool,
+    /// Local time `HH:MM` for the streak-at-risk reminder.
+    pub reminder_time: String,
+    /// No notifications of any kind during these hours.
+    pub quiet_hours: QuietHours,
 }
 
 impl Default for NotificationSettings {
     fn default() -> Self {
-        Self { goal_reached: true, achievements: true, streak_at_risk: false }
+        Self {
+            goal_reached: true,
+            achievements: true,
+            streak_at_risk: false,
+            reminder_time: "20:00".into(),
+            quiet_hours: QuietHours::default(),
+        }
+    }
+}
+
+/// A daily quiet window in local time; `start > end` wraps past midnight.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct QuietHours {
+    pub enabled: bool,
+    /// `HH:MM`, inclusive.
+    pub start: String,
+    /// `HH:MM`, exclusive.
+    pub end: String,
+}
+
+impl Default for QuietHours {
+    fn default() -> Self {
+        Self { enabled: false, start: "22:00".into(), end: "08:00".into() }
     }
 }
 
@@ -559,6 +588,9 @@ pub struct Settings {
     pub keep_deleted_history: bool,
     /// Codex: price unrecorded-tier requests as priority ("fast").
     pub codex_fast_tier: Option<bool>,
+    /// Global keyboard shortcut that toggles the popover, in Tauri accelerator
+    /// syntax (e.g. `"Alt+Shift+T"`, `"CmdOrCtrl+Shift+K"`); `null` = off (default).
+    pub popover_shortcut: Option<String>,
 }
 
 impl Default for Settings {
@@ -578,6 +610,7 @@ impl Default for Settings {
             share: ShareSettings::default(),
             keep_deleted_history: true,
             codex_fast_tier: None,
+            popover_shortcut: None,
         }
     }
 }
@@ -657,9 +690,14 @@ pub struct PriceRefreshResult {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ScanProgress {
+    /// `"initial"` while the first scan streams partial results, `"done"` at the end.
     pub phase: String,
     pub files_done: u32,
     pub files_total: u32,
+    #[ts(type = "number")]
+    pub bytes_done: u64,
+    #[ts(type = "number")]
+    pub bytes_total: u64,
 }
 
 /// Static information about the running app (`get_app_info`).

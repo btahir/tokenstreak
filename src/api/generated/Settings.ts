@@ -29,4 +29,9 @@ keepDeletedHistory: boolean,
 /**
  * Codex: price unrecorded-tier requests as priority ("fast").
  */
-codexFastTier: boolean | null, };
+codexFastTier: boolean | null, 
+/**
+ * Global keyboard shortcut that toggles the popover, in Tauri accelerator
+ * syntax (e.g. `"Alt+Shift+T"`, `"CmdOrCtrl+Shift+K"`); `null` = off (default).
+ */
+popoverShortcut: string | null, };
