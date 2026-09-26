@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Menu-bar app: no Dock icon at launch (the dashboard window temporarily
+       switches to a regular app while it is open). -->
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSHumanReadableCopyright</key>
+  <string>© 2026 Tokenstreak contributors. MIT License.</string>
+</dict>
+</plist>

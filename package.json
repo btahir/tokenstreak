@@ -1,0 +1,43 @@
+{
+  "name": "tokenstreak",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A beautiful Mac menu-bar tracker that turns your AI coding tokens into goals, streaks and a history worth sharing.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:web": "vite --mode web --port 5173",
+    "build": "tsc -b && vite build",
+    "build:web": "tsc -b && vite build --mode web --outDir dist-web",
+    "preview:web": "vite preview --mode web --outDir dist-web --port 4173",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "test:rust": "cargo test -p tokenstreak-core",
+    "test:oracle": "cargo test -p tokenstreak-core --test oracle -- --nocapture",
+    "test:perf": "cargo test --release -p tokenstreak-core --test perf -- --ignored --nocapture",
+    "gen:bindings": "cargo test -p tokenstreak-core --lib export_bindings",
+    "gen:mock": "cargo run --release -p tokenstreak-core --bin tokenstreak-cli -- gen-mock --out src/api/mock/presets --today 2026-09-26 --tz America/Los_Angeles",
+    "gen:fixtures": "python3 tests/fixtures/generate.py",
+    "sanity": "cargo run --release -p tokenstreak-core --bin tokenstreak-cli -- compare --online",
+    "tauri": "tauri"
+  },
+  "packageManager": "pnpm@11.1.1",
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-autostart": "^2.5.1",
+    "@tauri-apps/plugin-notification": "^2.4.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.5",
+    "@types/node": "^26.6.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.1"
+  }
+}

@@ -1,0 +1,32 @@
+[
+  {
+    "description": "First launch: a few hours of Claude Code today, no goal set yet.",
+    "id": "new-user",
+    "title": "New user"
+  },
+  {
+    "description": "Two months of history found on first launch, before a goal is chosen.",
+    "id": "first-run-reveal",
+    "title": "First-run reveal"
+  },
+  {
+    "description": "A month-long streak, today's goal already met.",
+    "id": "streak-30",
+    "title": "30-day streak"
+  },
+  {
+    "description": "A year of Claude Code, Codex and Gemini across many projects; long streak.",
+    "id": "heavy-multi-tool",
+    "title": "Heavy multi-tool user"
+  },
+  {
+    "description": "Today sits at 96% of the goal on a 12-day streak; the mock crosses it live.",
+    "id": "goal-hit",
+    "title": "Goal-hit moment"
+  },
+  {
+    "description": "9 p.m., a 9-day streak and only 30% of today's goal.",
+    "id": "streak-at-risk",
+    "title": "Streak at risk"
+  }
+]
