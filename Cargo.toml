@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["crates/tokenstreak-core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Tokenstreak contributors"]
+repository = "https://github.com/tokenstreak/tokenstreak"
+rust-version = "1.85"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+strip = true
+panic = "abort"
+
+# Tests of the parser are much faster with an optimised core even in debug.
+[profile.dev.package.tokenstreak-core]
+opt-level = 1
