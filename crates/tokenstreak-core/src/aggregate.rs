@@ -253,7 +253,7 @@ pub fn build_ledger(files: &[&FileRecord], opts: &BuildOptions<'_>) -> Ledger {
                     cache_read: ev.cache_read,
                     ..Default::default()
                 };
-                let found = gemini_candidates(model_name).into_iter().find_map(|c| opts.prices.find(&c));
+                let found = opts.prices.find_candidates(&gemini_candidates(model_name));
                 let (cost, priced, savings) = match found {
                     Some(p) => (cost_claude_shape(usage, &p), true, ev.cache_read as f64 * (p.input - p.cache_read).max(0.0)),
                     None => {

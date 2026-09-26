@@ -232,6 +232,19 @@ impl PriceTable {
         result
     }
 
+    /// Exact key lookup (no alias or fuzzy matching).
+    pub fn find_exact(&self, model: &str) -> Option<Pricing> {
+        self.entries.get(model).copied()
+    }
+
+    /// First exact hit among candidates, else the first fuzzy hit.
+    pub fn find_candidates(&self, candidates: &[String]) -> Option<Pricing> {
+        candidates
+            .iter()
+            .find_map(|c| self.find_exact(c))
+            .or_else(|| candidates.iter().find_map(|c| self.find(c)))
+    }
+
     fn fuzzy(&self, model: &str) -> Option<Pricing> {
         let norm = normalized(model);
         self.entries
