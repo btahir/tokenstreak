@@ -1,0 +1,23 @@
+# Internal notes (never commit)
+BRIEF.md
+PLAN.md
+ACCEPTANCE.md
+docs/design/
+docs/launch/
+notes/
+
+# Dependencies and builds
+node_modules/
+dist/
+target/
+src-tauri/target/
+src-tauri/gen/
+*.dmg
+
+# Never commit real usage logs
+real-logs/
+
+# Environment and OS
+.env*
+.DS_Store
+*.log
