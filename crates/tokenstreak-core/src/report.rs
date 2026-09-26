@@ -392,7 +392,9 @@ pub fn breakdown(ledger: &Ledger, c: &Computed, q: &RangeQuery, ws: WeekStart) -
     let mut savings = 0.0;
     let mut by_tool: BTreeMap<Tool, SliceAcc> = BTreeMap::new();
     let mut by_model: FxHashMap<(u32, Tool), SliceAcc> = FxHashMap::default();
-    let mut by_project: FxHashMap<u32, SliceAcc> = FxHashMap::default();
+    // Projects are identified by folder name across tools (Claude and Codex
+    // record the full path, Gemini a folder id), so group by label.
+    let mut by_project: FxHashMap<&str, SliceAcc> = FxHashMap::default();
     let mut sess: FxHashMap<u32, (Tool, u32, i64, i64, u64, f64, u32, BTreeSet<u32>)> = FxHashMap::default();
     let mut hourly = vec![0u64; 24];
     let mut weekday = vec![0u64; 7];
@@ -410,7 +412,7 @@ pub fn breakdown(ledger: &Ledger, c: &Computed, q: &RangeQuery, ws: WeekStart) -
         for acc in [
             by_tool.entry(e.tool).or_default(),
             by_model.entry((e.model, e.tool)).or_default(),
-            by_project.entry(e.project).or_default(),
+            by_project.entry(ledger.projects[e.project as usize].label.as_str()).or_default(),
         ] {
             add(&mut acc.tokens, e);
             acc.cost += e.cost;
@@ -454,10 +456,7 @@ pub fn breakdown(ledger: &Ledger, c: &Computed, q: &RangeQuery, ws: WeekStart) -
     models.sort_by(|a, b| b.tokens.total.cmp(&a.tokens.total).then(a.key.cmp(&b.key)));
     let mut projects: Vec<Slice> = by_project
         .into_iter()
-        .map(|(p, a)| {
-            let info = &ledger.projects[p as usize];
-            slice(info.key.clone(), info.label.clone(), a, None)
-        })
+        .map(|(label, a)| slice(label.to_string(), label.to_string(), a, None))
         .collect();
     projects.sort_by(|a, b| b.tokens.total.cmp(&a.tokens.total).then(a.key.cmp(&b.key)));
     let session_count = sess.len() as u32;
