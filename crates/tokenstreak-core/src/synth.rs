@@ -297,7 +297,7 @@ pub fn requests(s: &Scenario) -> Vec<Req> {
             let project = *rng.pick(&s.projects);
             let session = format!("{}{:06}", &rng.hex(8), session_n);
             let last_hour = if off == 0 { (s.now_hour - 1).max(1) } else { 23 };
-            let start_hour = rng.range(if off == 0 { 0.min(last_hour as u64) } else { 8 }, (last_hour as u64).max(1)) as i64;
+            let start_hour = rng.range(if off == 0 { 0 } else { 8 }, (last_hour as u64).max(1)) as i64;
             let start_hour = if off == 0 {
                 rng.range((last_hour as u64).saturating_sub(8), last_hour as u64 + 1) as i64
             } else if rng.chance(0.05) {

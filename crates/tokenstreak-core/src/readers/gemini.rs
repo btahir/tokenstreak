@@ -260,7 +260,7 @@ fn stats_events(stats: Option<&Stats>, hint: Option<&str>, ts_ms: i64) -> Vec<(S
         let v: Vec<_> = models
             .iter()
             .filter_map(|(m, d)| {
-                d.tokens.map(|t| build(Some(m), ts_ms, t.parsed(), Normalize::SubtractCached)).flatten()
+                d.tokens.and_then(|t| build(Some(m), ts_ms, t.parsed(), Normalize::SubtractCached))
             })
             .collect();
         if !v.is_empty() {
@@ -313,8 +313,7 @@ pub fn parse_lines(rec: &mut FileRecord, buf: &[u8], provisional: bool, mtime_ns
                 .unwrap_or(fallback_ts);
             let built = r
                 .tokens
-                .map(|t| build(r.model.as_deref().or(st.current_model.as_deref()), ts, t.parsed(), Normalize::Session))
-                .flatten();
+                .and_then(|t| build(r.model.as_deref().or(st.current_model.as_deref()), ts, t.parsed(), Normalize::Session));
             push(rec, &session, built, r.id.as_deref(), provisional);
             continue;
         }
@@ -354,7 +353,7 @@ pub fn parse_json_document(rec: &mut FileRecord, buf: &[u8], mtime_ns: i128) {
                 .and_then(parse_ts)
                 .or_else(|| m.created_at.as_deref().and_then(parse_ts))
                 .unwrap_or(session_ts);
-            let built = m.tokens.map(|t| build(m.model.as_deref(), ts, t.parsed(), Normalize::Session)).flatten();
+            let built = m.tokens.and_then(|t| build(m.model.as_deref(), ts, t.parsed(), Normalize::Session));
             // Legacy documents are not deduplicated by id (ccusage).
             push(rec, &session, built, None, false);
         }
@@ -367,7 +366,7 @@ pub fn parse_json_document(rec: &mut FileRecord, buf: &[u8], mtime_ns: i128) {
             .and_then(parse_ts)
             .or_else(|| doc.created_at.as_deref().and_then(parse_ts))
             .unwrap_or(fallback_ts);
-        let built = doc.tokens.map(|t| build(doc.model.as_deref(), ts, t.parsed(), Normalize::Session)).flatten();
+        let built = doc.tokens.and_then(|t| build(doc.model.as_deref(), ts, t.parsed(), Normalize::Session));
         push(rec, &session, built, None, false);
         return;
     }

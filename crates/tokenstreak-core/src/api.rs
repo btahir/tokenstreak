@@ -514,32 +514,24 @@ impl Default for NotificationSettings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
 #[ts(export)]
+#[derive(Default)]
 pub struct ShareSettings {
     /// Project names appear on share cards only when true.
     pub show_project_names: bool,
     pub show_cost: bool,
 }
 
-impl Default for ShareSettings {
-    fn default() -> Self {
-        Self { show_project_names: false, show_cost: false }
-    }
-}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
 #[ts(export)]
+#[derive(Default)]
 pub struct ToolsSettings {
     pub claude: ToolSettings,
     pub codex: ToolSettings,
     pub gemini: ToolSettings,
 }
 
-impl Default for ToolsSettings {
-    fn default() -> Self {
-        Self { claude: ToolSettings::default(), codex: ToolSettings::default(), gemini: ToolSettings::default() }
-    }
-}
 
 /// User preferences, persisted as `settings.json` in the app data folder.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
