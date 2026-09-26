@@ -8,6 +8,19 @@
 //! repeated or replayed cumulative snapshots are never double counted.
 //! Forked and sub-agent sessions replay their parent's history; that replay
 //! is removed during aggregation (see `aggregate::codex_replay`).
+//!
+//! Headless `codex exec --json` output (checked against openai/codex
+//! `codex-rs/exec/src/exec_events.rs` @ `b8d5e3f`, Sep 2026) goes to stdout
+//! only: `thread.started`, `turn.started`, `item.*` and `turn.completed`
+//! with `usage {input_tokens, cached_input_tokens, cache_write_input_tokens,
+//! output_tokens, reasoning_output_tokens}` and no timestamp or model. Codex
+//! itself also records every exec run as a normal rollout under `sessions/`
+//! (unless `--ephemeral`), which is what we read. When a user saves the
+//! `--json` stream as a `.jsonl` file under a Codex folder, its usage lines are
+//! read like ccusage does ("headless" lines): usage from the top level or
+//! `data` / `result` / `response`, timestamp from `timestamp` / `created_at` /
+//! `createdAt` or else the file's modification time, model from the line or
+//! the current/fallback model.
 
 use std::borrow::Cow;
 
@@ -259,6 +272,77 @@ fn timestamp_string(ts: Option<&Timestamp<'_>>) -> Option<String> {
     }
 }
 
+// --- headless `codex exec --json` lines ----------------------------------
+
+#[derive(Deserialize, Default)]
+struct Headless<'a> {
+    #[serde(borrow, default)]
+    timestamp: Option<Timestamp<'a>>,
+    #[serde(borrow, default)]
+    created_at: Option<Timestamp<'a>>,
+    #[serde(rename = "createdAt", borrow, default)]
+    created_at_camel: Option<Timestamp<'a>>,
+    #[serde(borrow, default)]
+    data: Option<&'a RawValue>,
+    #[serde(borrow, default)]
+    result: Option<&'a RawValue>,
+    #[serde(borrow, default)]
+    response: Option<&'a RawValue>,
+    #[serde(borrow, default)]
+    usage: Option<&'a RawValue>,
+    #[serde(borrow, default)]
+    model: Option<Cow<'a, str>>,
+    #[serde(borrow, default)]
+    model_name: Option<Cow<'a, str>>,
+    #[serde(borrow, default)]
+    metadata: Option<&'a RawValue>,
+}
+
+impl Headless<'_> {
+    fn usage(&self) -> Option<CodexRawUsage> {
+        object::<UsageFields>(self.usage).map(UsageFields::into_raw)
+    }
+    fn model(&self) -> Option<String> {
+        model_from(self.model.as_ref(), self.model_name.as_ref(), self.metadata)
+    }
+    fn timestamp(&self) -> Option<String> {
+        [&self.timestamp, &self.created_at, &self.created_at_camel]
+            .into_iter()
+            .find_map(|t| normalized_timestamp(t.as_ref()))
+    }
+}
+
+/// ccusage `normalize_codex_timestamp`: strings must parse; numbers are
+/// seconds or milliseconds.
+fn normalized_timestamp(ts: Option<&Timestamp<'_>>) -> Option<String> {
+    match ts? {
+        Timestamp::Str(s) => parse_ts(s.trim()).map(format_rfc3339_ms),
+        other => timestamp_string(Some(other)),
+    }
+}
+
+/// A headless usage record: (raw usage, model, timestamp) with ccusage's
+/// top-level → `data` → `result` → `response` precedence.
+fn headless_usage(line: &[u8]) -> Option<(CodexRawUsage, Option<String>, Option<String>)> {
+    let top: Headless = serde_json::from_slice(line).ok()?;
+    let nested: Vec<Headless> =
+        [top.data, top.result, top.response].into_iter().filter_map(object::<Headless>).collect();
+    let usage = top.usage().or_else(|| nested.iter().find_map(Headless::usage))?.normalized();
+    if usage.is_zero() && usage.total == 0 {
+        return None;
+    }
+    let model = top.model().or_else(|| nested.iter().find_map(Headless::model));
+    let ts = top.timestamp().or_else(|| nested.iter().find_map(Headless::timestamp));
+    Some((usage, model, ts))
+}
+
+fn is_headless_line(line: &[u8]) -> bool {
+    use memchr::memmem::find;
+    find(line, br#""usage":"#).is_some()
+        || find(line, br#""input_tokens":"#).is_some()
+        || find(line, br#""prompt_tokens":"#).is_some()
+}
+
 // --- session metadata (first line) ----------------------------------------
 
 #[derive(Deserialize, Default)]
@@ -354,7 +438,7 @@ fn auto_review_fallback(model: &str, timestamp: &str) -> Option<&'static str> {
     Some(AUTO_REVIEW_FALLBACKS.iter().find(|(d, _)| date >= *d).map(|(_, m)| *m).unwrap_or("gpt-5"))
 }
 
-pub fn parse_lines(rec: &mut FileRecord, buf: &[u8], provisional: bool, _mtime_ns: i128) {
+pub fn parse_lines(rec: &mut FileRecord, buf: &[u8], provisional: bool, mtime_ns: i128) {
     let mut state = match &rec.state {
         ReaderState::Codex(s) => s.clone(),
         _ => CodexState::default(),
@@ -377,6 +461,21 @@ pub fn parse_lines(rec: &mut FileRecord, buf: &[u8], provisional: bool, _mtime_n
             continue;
         }
         if !is_session_line(line) {
+            if is_headless_line(line) {
+                if let Some((raw, parsed_model, ts)) = headless_usage(line) {
+                    let timestamp = ts.unwrap_or_else(|| format_rfc3339_ms((mtime_ns / 1_000_000) as i64));
+                    let (model, is_fallback) = resolve_model(parsed_model, &timestamp, &mut state);
+                    if let Some(ts_ms) = parse_ts(&timestamp) {
+                        let fl = if is_fallback { flags::FALLBACK_MODEL } else { 0 };
+                        let ev = event(rec, ts_ms, session_idx, &model, raw, fl);
+                        if provisional {
+                            rec.provisional.push(ev);
+                        } else {
+                            rec.events.push(ev);
+                        }
+                    }
+                }
+            }
             continue;
         }
         let Ok(l) = serde_json::from_slice::<Line>(line) else {
@@ -452,24 +551,7 @@ pub fn parse_lines(rec: &mut FileRecord, buf: &[u8], provisional: bool, _mtime_n
             Some(ServiceTier::Fast) => fl |= flags::TIER_FAST,
             None => {}
         }
-        let model_idx = rec.intern_model(&model);
-        let ev = RawEvent {
-            ts_ms,
-            model: model_idx,
-            session: session_idx,
-            input: raw.input - raw.cached - raw.cache_creation,
-            output: raw.output,
-            cache_create_5m: raw.cache_creation,
-            cache_create_1h: 0,
-            cache_read: raw.cached,
-            reasoning: raw.reasoning,
-            extra: 0,
-            total_raw: raw.total,
-            recorded_cost: None,
-            msg_id: None,
-            req_id: None,
-            flags: fl,
-        };
+        let ev = event(rec, ts_ms, session_idx, &model, raw, fl);
         if provisional {
             rec.provisional.push(ev);
         } else {
@@ -489,6 +571,26 @@ pub fn parse_lines(rec: &mut FileRecord, buf: &[u8], provisional: bool, _mtime_n
         }
     } else {
         rec.state = ReaderState::Codex(state);
+    }
+}
+
+fn event(rec: &mut FileRecord, ts_ms: i64, session: u32, model: &str, raw: CodexRawUsage, fl: u8) -> RawEvent {
+    RawEvent {
+        ts_ms,
+        model: rec.intern_model(model),
+        session,
+        input: raw.input - raw.cached - raw.cache_creation,
+        output: raw.output,
+        cache_create_5m: raw.cache_creation,
+        cache_create_1h: 0,
+        cache_read: raw.cached,
+        reasoning: raw.reasoning,
+        extra: 0,
+        total_raw: raw.total,
+        recorded_cost: None,
+        msg_id: None,
+        req_id: None,
+        flags: fl,
     }
 }
 
@@ -527,5 +629,59 @@ pub fn session_id_from_rel(rel: &str) -> String {
         "unknown".into()
     } else {
         s.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Tool;
+
+    fn rec() -> FileRecord {
+        FileRecord::new(Tool::Codex, "/x/exec.jsonl".into(), "exec.jsonl".into(), 0)
+    }
+
+    /// The exact shape `codex exec --json` prints (exec_events.rs): no
+    /// timestamp and no model, so the file time and the fallback model apply.
+    #[test]
+    fn reads_saved_exec_json_stream() {
+        let mtime_ms = crate::time::parse_ts("2026-09-26T12:00:00Z").unwrap();
+        let buf = br#"{"type":"thread.started","thread_id":"0199a000-0000-7000-8000-00000000e001"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"SECRET_TEXT"}}
+{"type":"turn.completed","usage":{"input_tokens":24763,"cached_input_tokens":24448,"cache_write_input_tokens":0,"output_tokens":122,"reasoning_output_tokens":64}}
+{"type":"turn.completed","timestamp":"2026-09-25T10:00:00.000Z","model":"gpt-5.4","usage":{"input_tokens":100,"output_tokens":10}}
+{"result":{"created_at":1758794400,"usage":{"prompt_tokens":50,"completion_tokens":5},"model_name":"gpt-5-mini"}}
+{"type":"turn.completed","usage":{"input_tokens":0,"output_tokens":0}}
+"#;
+        let mut r = rec();
+        parse_lines(&mut r, buf, false, mtime_ms as i128 * 1_000_000);
+        assert_eq!(r.events.len(), 3);
+        let e = &r.events[0];
+        assert_eq!(e.ts_ms, mtime_ms);
+        assert_eq!((e.input, e.cache_read, e.output, e.reasoning, e.total_raw), (315, 24448, 122, 64, 24885));
+        assert_eq!(r.model_name(e.model), Some("gpt-5"));
+        assert!(e.flags & flags::FALLBACK_MODEL != 0);
+        let e = &r.events[1];
+        assert_eq!(e.ts_ms, crate::time::parse_ts("2026-09-25T10:00:00Z").unwrap());
+        assert_eq!(r.model_name(e.model), Some("gpt-5.4"));
+        assert_eq!(e.flags & flags::FALLBACK_MODEL, 0);
+        let e = &r.events[2];
+        assert_eq!(e.ts_ms, 1_758_794_400_000);
+        assert_eq!((e.input, e.output), (50, 5));
+        assert_eq!(r.model_name(e.model), Some("gpt-5-mini"));
+        assert!(!r.models.iter().any(|m| m.contains("SECRET")));
+    }
+
+    /// Rollout lines never count twice through the headless path.
+    #[test]
+    fn rollout_lines_are_not_headless() {
+        let buf = br#"{"timestamp":"2026-09-26T10:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":1,"total_tokens":11},"last_token_usage":{"input_tokens":10,"output_tokens":1,"total_tokens":11}}}}
+{"timestamp":"2026-09-26T10:00:01.000Z","type":"response_item","payload":{"type":"message","content":[{"type":"output_text","text":"{\"usage\":{\"input_tokens\":999}}"}]}}
+"#;
+        let mut r = rec();
+        parse_lines(&mut r, buf, false, 0);
+        assert_eq!(r.events.len(), 1);
+        assert_eq!(r.events[0].input, 10);
     }
 }

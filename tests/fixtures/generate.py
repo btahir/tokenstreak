@@ -237,6 +237,26 @@ def gen_codex():
         token_count("2026-09-26T09:10:05.000Z", u(305000, 204000, 1300, 100), u(300000, 200000, 1000, 0)),
     ])
 
+    # A saved `codex exec --json` stream (exec_events.rs @ b8d5e3f): stdout
+    # events with usage on turn.completed and no model. One line carries its
+    # own timestamp and model (ccusage accepts both shapes); the others fall
+    # back to the file's modification time and the default model.
+    write_lines(os.path.join(S, "2026/09/26", "codex-exec-2026-09-26T11-00-00.jsonl"), [
+        {"type": "thread.started", "thread_id": "0199a000-0000-7000-8000-00000000e001"},
+        {"type": "turn.started"},
+        {"type": "item.completed", "item": {"id": "item_0", "type": "reasoning", "text": SENT_THINKING}},
+        {"type": "item.completed", "item": {"id": "item_1", "type": "command_execution", "command": SENT_TOOL,
+                                            "aggregated_output": SENT_TOOL, "exit_code": 0, "status": "completed"}},
+        {"type": "item.completed", "item": {"id": "item_2", "type": "agent_message", "text": SENT_RESPONSE}},
+        {"type": "turn.completed", "timestamp": "2026-09-26T11:00:30.000Z", "model": "gpt-5.4",
+         "usage": {"input_tokens": 24763, "cached_input_tokens": 24448, "cache_write_input_tokens": 0,
+                   "output_tokens": 122, "reasoning_output_tokens": 64}},
+        {"type": "turn.started"},
+        {"type": "turn.completed", "usage": {"input_tokens": 3100, "cached_input_tokens": 2048,
+                                              "cache_write_input_tokens": 0, "output_tokens": 410,
+                                              "reasoning_output_tokens": 128}},
+    ])
+
     # Archived copy with the same relative path is ignored (active copy wins);
     # a copy under a different name collapses by event identity.
     A = os.path.join(root, "archived_sessions")
@@ -248,40 +268,83 @@ def gen_codex():
 
 
 # ---------------------------------------------------------------- Gemini ---
+# Layout and record shapes follow gemini-cli packages/core/src (storage.ts,
+# projectRegistry.ts, chatRecordingService.ts) @ 2fe7c2d, Sep 2026:
+#   tmp/<slug>/.project_root                  the project's absolute path
+#   tmp/<slug>/chats/session-<YYYY-MM-DDTHH-MM>-<sessionId[:8]>.jsonl
+#   tmp/<slug>/chats/<parentSessionId>/<subagentSessionId>.jsonl
+#   tmp/<sha256>/chats/session-*.json         legacy hash folders, whole documents
+# A JSONL session starts with a metadata record, then message records. A
+# gemini message is appended while it streams (no tokens), then re-appended
+# with the same id once recordMessageTokens() runs; `$set` updates metadata
+# and `$rewindTo` hides later messages from the UI (their tokens were spent).
 def gen_gemini():
     root = os.path.join(HERE, "gemini", "basic")
     reset(root)
-    proj = os.path.join(root, "alpha-3f2a", "chats")
-    sid = "g-session-0001"
-    write_lines(os.path.join(proj, "session-2026-09-25T21-00-g0001.jsonl"), [
+    slug = os.path.join(root, "alpha")
+    os.makedirs(slug)
+    with open(os.path.join(slug, ".project_root"), "w") as f:
+        f.write("/Users/demo/code/alpha")
+    # gemini-cli keeps other per-project files next to chats/ (user prompts in
+    # logs.json, checkpoints); they must never be read.
+    with open(os.path.join(slug, "logs.json"), "w") as f:
+        json.dump([{"sessionId": "x", "messageId": 0, "type": "user", "message": SENT_PROMPT,
+                    "timestamp": "2026-09-25T21:00:01.000Z"}], f)
+    os.makedirs(os.path.join(slug, "checkpoints"))
+    with open(os.path.join(slug, "checkpoints", "checkpoint-a.json"), "w") as f:
+        json.dump({"history": [{"role": "user", "parts": [{"text": SENT_PROMPT}]},
+                               {"role": "model", "parts": [{"text": SENT_RESPONSE}]}],
+                   "clientHistory": [{"role": "user", "parts": [{"text": SENT_PROMPT}]}],
+                   "toolCall": {"name": "replace", "args": {"new_string": SENT_TOOL}},
+                   "commitHash": "0000000000000000000000000000000000000000"}, f)
+    proj = os.path.join(slug, "chats")
+    sid = "6f1c2a9b-4d3e-4f5a-9b8c-7d6e5f4a3b2c"
+    write_lines(os.path.join(proj, "session-2026-09-25T21-00-6f1c2a9b.jsonl"), [
         {"sessionId": sid, "projectHash": "3f2a" * 16, "startTime": "2026-09-25T21:00:00.000Z",
-         "lastUpdated": "2026-09-26T10:00:00.000Z", "kind": "main"},
+         "lastUpdated": "2026-09-25T21:00:00.000Z", "kind": "main"},
         {"id": "m1", "timestamp": "2026-09-25T21:00:01.000Z", "type": "user", "content": [{"text": SENT_PROMPT}]},
+        # Streaming copy of m2: no tokens yet.
+        {"id": "m2", "timestamp": "2026-09-25T21:00:05.000Z", "type": "gemini", "content": SENT_RESPONSE,
+         "thoughts": [{"subject": "Plan", "description": SENT_THINKING, "timestamp": "2026-09-25T21:00:04.000Z"}],
+         "model": "gemini-2.5-pro"},
         {"id": "m2", "timestamp": "2026-09-25T21:00:05.000Z", "type": "gemini", "content": SENT_RESPONSE,
          "thoughts": [{"subject": "Plan", "description": SENT_THINKING, "timestamp": "2026-09-25T21:00:04.000Z"}],
          "toolCalls": [{"id": "c1", "name": "run_shell_command", "args": {"command": SENT_TOOL}, "status": "success",
                         "timestamp": "2026-09-25T21:00:04.500Z", "result": [{"text": SENT_TOOL}]}],
          "tokens": {"input": 15327, "output": 23, "cached": 11526, "thoughts": 919, "tool": 7, "total": 16276},
          "model": "gemini-2.5-pro"},
-        # Updated copy of m2 (same id) replaces the first.
+        # Updated copy of m2 (same id) replaces the earlier ones.
         {"id": "m2", "timestamp": "2026-09-25T21:00:05.000Z", "type": "gemini", "content": SENT_RESPONSE,
          "tokens": {"input": 15327, "output": 120, "cached": 11526, "thoughts": 919, "tool": 7, "total": 16373},
          "model": "gemini-2.5-pro"},
-        {"$set": {"summary": SENT_PROMPT}},
+        {"$set": {"lastUpdated": "2026-09-25T21:00:06.000Z", "summary": SENT_PROMPT}},
         "{broken json",
         {"id": "m3", "timestamp": "2026-09-26T00:00:00.000Z", "type": "gemini", "content": SENT_RESPONSE,
          "tokens": {"input": 2000, "output": 300, "cached": 0, "thoughts": 50, "tool": 0, "total": 2350},
          "model": "gemini-2.5-flash"},
+        # The user rewound to m3: m3 leaves the UI, but its tokens were spent.
+        {"$rewindTo": "m3"},
         # Exclusive cache accounting (total counts cached separately).
         {"id": "m4", "timestamp": "2026-09-26T10:00:00.000Z", "type": "gemini", "content": SENT_RESPONSE,
          "tokens": {"input": 1000, "output": 100, "cached": 4000, "thoughts": 0, "tool": 0, "total": 5100},
          "model": "gemini-2.5-flash"},
     ])
-    # Legacy whole-document format.
-    legacy = os.path.join(root, "beta-9c1d", "chats", "session-2026-09-24T08-00-legacy.json")
+    # A subagent's chat, nested under its parent session id.
+    sub = "a1b2c3d4-0000-4000-8000-000000000001"
+    write_lines(os.path.join(proj, sid, sub + ".jsonl"), [
+        {"sessionId": sub, "projectHash": "3f2a" * 16, "startTime": "2026-09-26T10:01:00.000Z",
+         "lastUpdated": "2026-09-26T10:01:00.000Z", "kind": "subagent", "directories": ["/Users/demo/code/alpha"]},
+        {"id": "s1", "timestamp": "2026-09-26T10:01:01.000Z", "type": "user", "content": [{"text": SENT_PROMPT}]},
+        {"id": "s2", "timestamp": "2026-09-26T10:01:09.000Z", "type": "gemini", "content": SENT_RESPONSE,
+         "tokens": {"input": 4200, "output": 380, "cached": 1024, "thoughts": 120, "tool": 0, "total": 4700},
+         "model": "gemini-2.5-flash"},
+    ])
+    # Legacy hash folder with a whole-document session.
+    legacy = os.path.join(root, "9c1d" * 16, "chats", "session-2026-09-24T08-00-9c1d0000.json")
     os.makedirs(os.path.dirname(legacy), exist_ok=True)
     with open(legacy, "w") as f:
-        json.dump({"sessionId": "g-legacy-1", "projectHash": "9c1d" * 16, "startTime": "2026-09-24T08:00:00.000Z",
+        json.dump({"sessionId": "9c1d0000-1111-4222-8333-444455556666", "projectHash": "9c1d" * 16,
+                   "startTime": "2026-09-24T08:00:00.000Z",
                    "lastUpdated": "2026-09-24T09:00:00.000Z", "messages": [
                        {"id": "l1", "timestamp": "2026-09-24T08:00:01.000Z", "type": "user", "content": SENT_PROMPT},
                        {"id": "l2", "timestamp": "2026-09-24T08:00:09.000Z", "type": "gemini", "content": SENT_RESPONSE,

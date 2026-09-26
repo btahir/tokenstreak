@@ -15,6 +15,8 @@ pub mod gemini;
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+#[cfg(test)]
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -181,6 +183,8 @@ pub fn update_record(rec: &mut FileRecord, st: Stamp) -> std::io::Result<UpdateK
         file.seek(SeekFrom::Start(rec.offset))?;
         rec.provisional.clear();
         let mut buf = AnonBuf::new(CHUNK)?;
+        // Inside a line longer than MAX_LINE: drop bytes until its newline.
+        let mut skipping = false;
         loop {
             buf.reserve(CHUNK)?;
             let n = read_full(&mut file, buf.spare())?;
@@ -188,7 +192,30 @@ pub fn update_record(rec: &mut FileRecord, st: Stamp) -> std::io::Result<UpdateK
             if n == 0 {
                 break;
             }
-            let Some(last_nl) = memchr::memrchr(b'\n', buf.data()) else { continue };
+            if skipping {
+                match memchr::memchr(b'\n', buf.data()) {
+                    Some(i) => {
+                        rec.offset += (i + 1) as u64;
+                        buf.consume(i + 1);
+                        rec.malformed_lines += 1;
+                        skipping = false;
+                    }
+                    None => {
+                        rec.offset += buf.len as u64;
+                        buf.consume(buf.len);
+                        continue;
+                    }
+                }
+            }
+            let Some(last_nl) = memchr::memrchr(b'\n', buf.data()) else {
+                if buf.len > max_line() {
+                    // No usage record is this large; don't buffer it.
+                    rec.offset += buf.len as u64;
+                    buf.consume(buf.len);
+                    skipping = true;
+                }
+                continue;
+            };
             let complete = last_nl + 1;
             match tool {
                 Tool::Claude => claude::parse_lines(rec, &buf.data()[..complete], false),
@@ -199,7 +226,7 @@ pub fn update_record(rec: &mut FileRecord, st: Stamp) -> std::io::Result<UpdateK
             buf.consume(complete);
         }
         let tail = buf.data();
-        if !tail.iter().all(|b| b.is_ascii_whitespace()) {
+        if !skipping && !tail.iter().all(|b| b.is_ascii_whitespace()) {
             // A trailing line without newline: count it (as ccusage does) but
             // keep it provisional so an in-progress write is re-read next time.
             match tool {
@@ -217,6 +244,22 @@ pub fn update_record(rec: &mut FileRecord, st: Stamp) -> std::io::Result<UpdateK
 }
 
 const CHUNK: usize = 4 * 1024 * 1024;
+
+/// Lines longer than this are skipped without being buffered (real usage
+/// lines are at most tens of megabytes, from inlined tool output), so a
+/// corrupt or binary file can't make memory grow without bound.
+const MAX_LINE: usize = 256 * 1024 * 1024;
+
+#[cfg(not(test))]
+fn max_line() -> usize {
+    MAX_LINE
+}
+#[cfg(test)]
+fn max_line() -> usize {
+    // Small in unit tests so the skip path is exercised cheaply.
+    let _ = MAX_LINE;
+    6 * 1024 * 1024
+}
 
 /// A growable byte buffer backed by an anonymous memory map. Unlike heap
 /// buffers, its pages go straight back to the OS when dropped, so scanning
@@ -296,6 +339,8 @@ pub struct SourceConfig {
     pub claude_dirs: Option<Vec<PathBuf>>,
     pub codex_homes: Option<Vec<PathBuf>>,
     pub gemini_dirs: Option<Vec<PathBuf>>,
+    /// gemini-cli's `GEMINI_CLI_HOME` (replaces the home folder for `.gemini`).
+    pub gemini_cli_home: Option<PathBuf>,
     pub enabled: [bool; 3],
 }
 
@@ -311,6 +356,7 @@ impl SourceConfig {
             claude_dirs: std::env::var("CLAUDE_CONFIG_DIR").ok().map(split),
             codex_homes: std::env::var("CODEX_HOME").ok().map(split),
             gemini_dirs: std::env::var("GEMINI_DATA_DIR").ok().map(split),
+            gemini_cli_home: std::env::var_os("GEMINI_CLI_HOME").filter(|v| !v.is_empty()).map(PathBuf::from),
             enabled: [true; 3],
         }
     }
@@ -368,16 +414,33 @@ impl SourceConfig {
             }
         }
         if self.enabled[Tool::Gemini.index()] {
-            let dirs =
-                self.gemini_dirs.clone().unwrap_or_else(|| vec![home.join(".gemini").join("tmp")]);
+            let dirs = self.gemini_dirs.clone().unwrap_or_else(|| gemini_default_dirs(&home, self.gemini_cli_home.as_deref()));
+            let mut seen = Vec::new();
             for d in dirs {
-                if d.is_dir() {
+                if d.is_dir() && !seen.contains(&d) {
+                    seen.push(d.clone());
                     roots.push(SourceRoot { tool: Tool::Gemini, dir: d, dedup_group: None });
                 }
             }
         }
         roots
     }
+}
+
+/// Where gemini-cli keeps chats when `GEMINI_DATA_DIR` is not set (checked
+/// against gemini-cli `packages/core/src/config/storage.ts` @ `2fe7c2d`):
+/// `<home>/.gemini/tmp/<project>/chats/`, where `<home>` is `GEMINI_CLI_HOME`
+/// when set, and `~/.cache/.gemini/tmp` when the CLI ran under the macOS
+/// Seatbelt sandbox (`SANDBOX=sandbox-exec`, `gemini --sandbox`).
+pub fn gemini_default_dirs(home: &Path, cli_home: Option<&Path>) -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    if let Some(h) = cli_home {
+        v.push(h.join(".gemini").join("tmp"));
+        v.push(h.join(".cache").join(".gemini").join("tmp"));
+    }
+    v.push(home.join(".gemini").join("tmp"));
+    v.push(home.join(".cache").join(".gemini").join("tmp"));
+    v
 }
 
 pub fn expand_home(raw: &str) -> PathBuf {
@@ -479,5 +542,67 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Field<T> {
             Some(v) => Field::Value(v),
             None => Field::Null,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn claude_line(id: &str, ts: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","sessionId":"s","version":"2.0.14","requestId":"r{id}","timestamp":"{ts}","message":{{"id":"m{id}","model":"claude-sonnet-4-5","usage":{{"input_tokens":10,"output_tokens":5}}}}}}"#
+        )
+    }
+
+    #[test]
+    fn skips_lines_longer_than_the_cap_and_keeps_offsets_right() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("big.jsonl");
+        let huge = format!("{{\"usage\":{{ \"x\":\"{}\"}}}}", "a".repeat(9 * 1024 * 1024));
+        let body = format!(
+            "{}\n{}\n{}\n",
+            claude_line("1", "2026-09-26T10:00:00.000Z"),
+            huge,
+            claude_line("2", "2026-09-26T11:00:00.000Z")
+        );
+        std::fs::write(&p, &body).unwrap();
+        let mut rec = FileRecord::new(Tool::Claude, p.clone(), "big.jsonl".into(), 0);
+        update_record(&mut rec, stamp(&p).unwrap()).unwrap();
+        assert_eq!(rec.events.len(), 2);
+        assert_eq!(rec.offset, body.len() as u64);
+        assert_eq!(rec.malformed_lines, 1);
+        // Appending after the skipped line still parses incrementally.
+        let more = format!("{}\n", claude_line("3", "2026-09-26T12:00:00.000Z"));
+        std::fs::OpenOptions::new().append(true).open(&p).unwrap().write_all(more.as_bytes()).unwrap();
+        assert_eq!(update_record(&mut rec, stamp(&p).unwrap()).unwrap(), UpdateKind::Appended);
+        assert_eq!(rec.events.len(), 3);
+    }
+
+    #[test]
+    fn unreadable_files_are_reported_not_fatal() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("locked.jsonl");
+        std::fs::write(&p, format!("{}\n", claude_line("1", "2026-09-26T10:00:00.000Z"))).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let mut rec = FileRecord::new(Tool::Claude, p.clone(), "locked.jsonl".into(), 0);
+        let r = update_record(&mut rec, stamp(&p).unwrap());
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        // Root can read anything; otherwise this is a permission error.
+        if r.is_err() {
+            assert!(rec.events.is_empty());
+            assert!(!rec.parsed);
+        }
+    }
+
+    #[test]
+    fn gemini_default_dirs_follow_gemini_cli() {
+        let home = Path::new("/Users/u");
+        let d = gemini_default_dirs(home, None);
+        assert_eq!(d, vec![home.join(".gemini/tmp"), home.join(".cache/.gemini/tmp")]);
+        let d = gemini_default_dirs(home, Some(Path::new("/alt")));
+        assert_eq!(d[0], PathBuf::from("/alt/.gemini/tmp"));
+        assert_eq!(d.len(), 4);
     }
 }

@@ -273,12 +273,36 @@ fn stats_events(stats: Option<&Stats>, hint: Option<&str>, ts_ms: i64) -> Vec<(S
 }
 
 fn init_project(rec: &mut FileRecord) {
-    if rec.project.is_empty() {
-        // `<project>/chats/...` relative to tmp: the project folder name.
-        let p = rec.rel.split('/').next().unwrap_or("gemini").to_string();
-        rec.project_label = p.clone();
-        rec.project = format!("gemini:{p}");
+    if !rec.project.is_empty() {
+        return;
     }
+    // `<project>/chats/...` relative to tmp. Current gemini-cli names the
+    // folder after a slug of the project folder and writes the project's
+    // path to `<project>/.project_root`; older releases used a SHA-256 hash.
+    let folder = rec.rel.split('/').next().unwrap_or("gemini").to_string();
+    if let Some(root) = project_root_marker(rec, &folder) {
+        let root = root.trim_end_matches('/');
+        rec.project_label = root.rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or(&folder).to_string();
+        rec.project = root.to_string();
+        return;
+    }
+    let is_hash = folder.len() == 64 && folder.bytes().all(|b| b.is_ascii_hexdigit());
+    rec.project_label = if is_hash { format!("Gemini project {}", &folder[..8]) } else { folder.clone() };
+    rec.project = format!("gemini:{folder}");
+}
+
+/// Reads `<tmp>/<project>/.project_root` (a single absolute path).
+fn project_root_marker(rec: &FileRecord, folder: &str) -> Option<String> {
+    use std::io::Read;
+    let depth = rec.rel.split('/').count();
+    let mut tmp = rec.path.as_path();
+    for _ in 0..depth {
+        tmp = tmp.parent()?;
+    }
+    let mut buf = String::new();
+    std::fs::File::open(tmp.join(folder).join(".project_root")).ok()?.take(4096).read_to_string(&mut buf).ok()?;
+    let line = buf.lines().next()?.trim();
+    line.starts_with('/').then(|| line.to_string())
 }
 
 fn file_stem(rec: &FileRecord) -> String {

@@ -203,6 +203,7 @@ fn generate(d: &Def, seed: u64, today: Date, tz: &TimeZone, work: &Path) -> std:
         claude_dirs: Some(vec![roots[0].clone()]),
         codex_homes: Some(vec![roots[1].clone()]),
         gemini_dirs: Some(vec![roots[2].clone()]),
+        gemini_cli_home: None,
         enabled: [true; 3],
     };
     let data = dir.join("data");

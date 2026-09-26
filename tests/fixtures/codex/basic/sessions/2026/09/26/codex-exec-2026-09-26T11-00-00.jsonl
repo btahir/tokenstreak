@@ -1,0 +1,8 @@
+{"type":"thread.started","thread_id":"0199a000-0000-7000-8000-00000000e001"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"reasoning","text":"TOKENSTREAK_SENTINEL_THINKING_0d9e1a"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"TOKENSTREAK_SENTINEL_TOOL_55c2f0","aggregated_output":"TOKENSTREAK_SENTINEL_TOOL_55c2f0","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"TOKENSTREAK_SENTINEL_RESPONSE_b21e44"}}
+{"type":"turn.completed","timestamp":"2026-09-26T11:00:30.000Z","model":"gpt-5.4","usage":{"input_tokens":24763,"cached_input_tokens":24448,"cache_write_input_tokens":0,"output_tokens":122,"reasoning_output_tokens":64}}
+{"type":"turn.started"}
+{"type":"turn.completed","usage":{"input_tokens":3100,"cached_input_tokens":2048,"cache_write_input_tokens":0,"output_tokens":410,"reasoning_output_tokens":128}}

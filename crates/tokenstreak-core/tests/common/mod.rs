@@ -20,6 +20,7 @@ pub fn sources(claude: Option<PathBuf>, codex: Option<PathBuf>, gemini: Option<P
         claude_dirs: Some(vec![claude.unwrap_or(nowhere.clone())]),
         codex_homes: Some(vec![codex.unwrap_or(nowhere.clone())]),
         gemini_dirs: Some(vec![gemini.unwrap_or(nowhere)]),
+        ..Default::default()
     }
 }
 
