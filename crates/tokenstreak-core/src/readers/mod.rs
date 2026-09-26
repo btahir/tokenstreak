@@ -177,21 +177,28 @@ pub fn update_record(rec: &mut FileRecord, st: Stamp) -> std::io::Result<UpdateK
         gemini::parse_json_document(rec, &buf, st.mtime_ns);
         rec.offset = buf.len() as u64;
     } else {
+        // Stream in bounded chunks so memory stays flat on multi-GB logs.
         file.seek(SeekFrom::Start(rec.offset))?;
-        let mut buf = Vec::with_capacity(st.size.saturating_sub(rec.offset) as usize);
-        file.read_to_end(&mut buf)?;
-        let complete = match memchr::memrchr(b'\n', &buf) {
-            Some(i) => i + 1,
-            None => 0,
-        };
-        let (done, tail) = buf.split_at(complete);
         rec.provisional.clear();
-        match tool {
-            Tool::Claude => claude::parse_lines(rec, done, false),
-            Tool::Codex => codex::parse_lines(rec, done, false, st.mtime_ns),
-            Tool::Gemini => gemini::parse_lines(rec, done, false, st.mtime_ns),
+        let mut buf = AnonBuf::new(CHUNK)?;
+        loop {
+            buf.reserve(CHUNK)?;
+            let n = read_full(&mut file, buf.spare())?;
+            buf.len += n;
+            if n == 0 {
+                break;
+            }
+            let Some(last_nl) = memchr::memrchr(b'\n', buf.data()) else { continue };
+            let complete = last_nl + 1;
+            match tool {
+                Tool::Claude => claude::parse_lines(rec, &buf.data()[..complete], false),
+                Tool::Codex => codex::parse_lines(rec, &buf.data()[..complete], false, st.mtime_ns),
+                Tool::Gemini => gemini::parse_lines(rec, &buf.data()[..complete], false, st.mtime_ns),
+            }
+            rec.offset += complete as u64;
+            buf.consume(complete);
         }
-        rec.offset += complete as u64;
+        let tail = buf.data();
         if !tail.iter().all(|b| b.is_ascii_whitespace()) {
             // A trailing line without newline: count it (as ccusage does) but
             // keep it provisional so an in-progress write is re-read next time.
@@ -207,6 +214,56 @@ pub fn update_record(rec: &mut FileRecord, st: Stamp) -> std::io::Result<UpdateK
     rec.inode = st.inode;
     rec.parsed = true;
     Ok(kind)
+}
+
+const CHUNK: usize = 4 * 1024 * 1024;
+
+/// A growable byte buffer backed by an anonymous memory map. Unlike heap
+/// buffers, its pages go straight back to the OS when dropped, so scanning
+/// many gigabytes (with lines of tens of megabytes) leaves no resident memory
+/// behind in allocator caches.
+struct AnonBuf {
+    map: memmap2::MmapMut,
+    len: usize,
+}
+
+impl AnonBuf {
+    fn new(cap: usize) -> std::io::Result<Self> {
+        Ok(Self { map: memmap2::MmapMut::map_anon(cap)?, len: 0 })
+    }
+    fn reserve(&mut self, extra: usize) -> std::io::Result<()> {
+        if self.map.len() - self.len >= extra {
+            return Ok(());
+        }
+        let mut bigger = memmap2::MmapMut::map_anon((self.len + extra).next_power_of_two())?;
+        bigger[..self.len].copy_from_slice(&self.map[..self.len]);
+        self.map = bigger;
+        Ok(())
+    }
+    fn spare(&mut self) -> &mut [u8] {
+        let len = self.len;
+        &mut self.map[len..]
+    }
+    fn data(&self) -> &[u8] {
+        &self.map[..self.len]
+    }
+    fn consume(&mut self, n: usize) {
+        self.map.copy_within(n..self.len, 0);
+        self.len -= n;
+    }
+}
+
+fn read_full(f: &mut File, buf: &mut [u8]) -> std::io::Result<usize> {
+    let mut n = 0;
+    while n < buf.len() {
+        match f.read(&mut buf[n..]) {
+            Ok(0) => break,
+            Ok(k) => n += k,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(n)
 }
 
 /// Iterates the lines of a buffer (split on `\n`, trailing `\r` trimmed).

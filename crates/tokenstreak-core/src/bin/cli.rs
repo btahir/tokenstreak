@@ -11,6 +11,9 @@
 //! ```
 //! Output never includes log content: only numbers, dates and model names.
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -98,12 +101,31 @@ fn main() {
             let t = Instant::now();
             let e = engine_for(&args);
             let bytes: u64 = e.files().iter().map(|f| f.size).sum();
+            let mut e = e;
+            let rb = Instant::now();
+            e.rebuild();
+            let rebuild_ms = rb.elapsed().as_millis();
+            let sc = Instant::now();
+            e.scan();
+            let rescan_ms = sc.elapsed().as_millis();
+            eprintln!("rebuild_ms={rebuild_ms} rescan_unchanged_ms={rescan_ms}");
+            let snap_t = Instant::now();
+            let _ = e.snapshot();
+            let rss = std::process::Command::new("ps")
+                .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .and_then(|s| s.trim().parse::<u64>().ok())
+                .unwrap_or(0);
             println!(
-                "files={} bytes={} events={} elapsed_ms={}",
+                "files={} bytes={} events={} elapsed_ms={} snapshot_ms={} rss_after_mb={}",
                 e.files().len(),
                 bytes,
                 e.ledger().events.len(),
-                t.elapsed().as_millis()
+                t.elapsed().as_millis(),
+                snap_t.elapsed().as_millis(),
+                rss / 1024
             );
         }
         "gen-logs" => {

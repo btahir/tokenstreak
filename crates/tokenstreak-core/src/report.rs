@@ -207,7 +207,9 @@ pub fn snapshot(input: SnapshotInput<'_>) -> AppSnapshot {
     let achievements =
         crate::achievements::compute(ledger, &c.totals, &c.streaks, &state.unlocked, &state.seen_achievements);
 
-    let celebration = if c.streaks.today_met && !state.celebrated_dates.iter().any(|d| d == &today.to_string()) {
+    let celebration = if c.streaks.today_met
+        && state.onboarding_completed_at.is_some()
+        && !state.celebrated_dates.iter().any(|d| d == &today.to_string()) {
         Some(Celebration {
             date: today.to_string(),
             tokens: tagg.tokens.total,

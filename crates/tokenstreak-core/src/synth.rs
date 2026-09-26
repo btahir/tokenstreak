@@ -261,6 +261,12 @@ pub fn requests(s: &Scenario) -> Vec<Req> {
     let mut rng = Rng::new(s.seed);
     let mut out = Vec::new();
     let mut session_n = 0u64;
+    let now_ms = s
+        .today
+        .at(s.now_hour as i8, 0, 0, 0)
+        .to_zoned(s.tz.clone())
+        .map(|z| z.timestamp().as_millisecond())
+        .unwrap_or(i64::MAX);
     for off in (0..=s.days).rev() {
         let day = s.today.checked_sub(off.days()).unwrap_or(s.today);
         let target = (s.target)(&mut rng, off, s.daily_goal);
@@ -270,7 +276,9 @@ pub fn requests(s: &Scenario) -> Vec<Req> {
         let mut produced = 0u64;
         // Sessions within the day.
         let tool_total: f64 = s.tools.iter().sum();
-        while produced < target {
+        let mut guard = 0;
+        while produced < target && guard < 10_000 {
+            guard += 1;
             session_n += 1;
             let x = rng.f64() * tool_total;
             let tool = if x < s.tools[0] {
@@ -305,7 +313,7 @@ pub fn requests(s: &Scenario) -> Vec<Req> {
             let turns = rng.range(4, 40);
             let mut context = rng.range(8_000, 30_000);
             for _ in 0..turns {
-                if produced >= target {
+                if produced >= target || t >= now_ms {
                     break;
                 }
                 let input = rng.range(3, 400);

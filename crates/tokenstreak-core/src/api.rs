@@ -669,3 +669,17 @@ pub struct ScanProgress {
     pub files_done: u32,
     pub files_total: u32,
 }
+
+/// Static information about the running app (`get_app_info`).
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AppInfo {
+    pub version: String,
+    /// Folder holding settings, state and the usage cache.
+    pub data_dir: String,
+    /// `"tauri"` in the app, `"mock"` in the browser mock.
+    pub backend: String,
+    pub launch_at_login: bool,
+    pub notifications_permitted: Option<bool>,
+}

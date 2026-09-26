@@ -196,13 +196,21 @@ impl Engine {
             next.push(rec);
         }
         let before_bytes: u64 = next.iter().map(|r| r.offset).sum();
-        let results: Vec<Option<UpdateKind>> = next
-            .par_iter_mut()
-            .map(|rec| {
-                let st = readers::stamp(&rec.path)?;
-                readers::update_record(rec, st).ok()
-            })
-            .collect();
+        let update = |rec: &mut FileRecord| {
+            let st = readers::stamp(&rec.path)?;
+            readers::update_record(rec, st).ok()
+        };
+        // A short-lived pool: its threads (and their allocator caches) exit
+        // after the scan, so a big first scan leaves no memory behind.
+        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8);
+        let results: Vec<Option<UpdateKind>> = match rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|i| format!("tokenstreak-scan-{i}"))
+            .build()
+        {
+            Ok(pool) => pool.install(|| next.par_iter_mut().map(update).collect()),
+            Err(_) => next.iter_mut().map(update).collect(),
+        };
         let mut report = ScanReport { files: next.len(), ..Default::default() };
         for r in results.into_iter().flatten() {
             match r {
@@ -223,6 +231,11 @@ impl Engine {
         }
         self.files = next;
         report.elapsed_ms = t0.elapsed().as_millis();
+        if report.bytes_read > 64 * 1024 * 1024 {
+            // Let the scan pool's threads exit, then hand their memory back.
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            release_memory();
+        }
         if report.changed() {
             self.cache_dirty = true;
         }
@@ -471,6 +484,26 @@ impl Engine {
                 PriceRefreshResult { ok: true, pricing: self.pricing_info(), error: None }
             }
             Err(e) => PriceRefreshResult { ok: false, pricing: self.pricing_info(), error: Some(e) },
+        }
+    }
+}
+
+/// Returns memory freed after a large scan to the OS. Parsing streams files
+/// through per-thread buffers; without this, macOS's allocator keeps those
+/// pages resident long after they are freed.
+pub fn release_memory() {
+    // SAFETY: plain FFI call; harmless when mimalloc is not the global allocator.
+    unsafe {
+        libmimalloc_sys::mi_collect(true);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+        }
+        // SAFETY: a null zone means "all zones"; goal 0 means "as much as possible".
+        unsafe {
+            malloc_zone_pressure_relief(std::ptr::null_mut(), 0);
         }
     }
 }
