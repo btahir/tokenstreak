@@ -156,6 +156,7 @@ export async function createMockApi(opts: MockOptions): Promise<TokenstreakApi> 
       snap.days[idx] = next;
     }
     snap.lifetime = { ...snap.lifetime, tokens: { ...snap.lifetime.tokens, total: snap.lifetime.tokens.total + added } };
+    snap.status = { ...snap.status, lastScanAt: new Date().toISOString() };
     recompute();
     if (!before && snap.today.met && snap.onboarding.completed) {
       const celebration = {
