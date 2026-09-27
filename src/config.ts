@@ -1,7 +1,7 @@
 // App-wide constants.
 
 /** "Support this project" link. Placeholder until the owner picks a destination. */
-export const SUPPORT_URL = "https://github.com/sponsors/tokenstreak";
+export const SUPPORT_URL = "https://example.com/support";
 
 /** Project repository (README, source, issues). */
-export const REPO_URL = "https://github.com/tokenstreak/tokenstreak";
+export const REPO_URL = "https://github.com/btahir/tokenstreak";

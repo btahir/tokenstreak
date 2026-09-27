@@ -56,6 +56,9 @@ function deepMerge<T>(base: T, patch: unknown): T {
 export async function createMockApi(opts: MockOptions): Promise<TokenstreakApi> {
   const preset = await loadPreset(opts.preset);
   let snap: AppSnapshot = preset.snapshot;
+  // Presets are generated from a temp folder; show the paths a real Mac would have.
+  const HOME: Record<string, string> = { claude: "/Users/you/.claude/projects", codex: "/Users/you/.codex/sessions", gemini: "/Users/you/.gemini/tmp" };
+  snap.sources = snap.sources.map((s) => ({ ...s, paths: s.paths.map((p) => (p.includes("tokenstreak-mock-work") ? HOME[s.tool] ?? p : p)) }));
   let settings: Settings = preset.settings;
   const listeners = new Map<keyof ApiEvents, Set<Listener>>();
   const emit = <E extends keyof ApiEvents>(e: E, payload: ApiEvents[E]) =>

@@ -6,7 +6,8 @@
 // refetched whenever a new snapshot arrives.
 
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { getApi } from "../api";
+import { getApi, isTauri } from "../api";
+import { setSoundEnabled } from "../lib/sound";
 import type { Achievement, AppSnapshot, Breakdown, Celebration, RangeQuery, Settings, TokenstreakApi } from "../api";
 
 export interface AppState {
@@ -19,6 +20,8 @@ export interface AppState {
   unlocked: Achievement[];
   /** Increments each time the popover is shown (replay entry motion). */
   popoverShownCount: number;
+  /** The popover window is on screen (Tauri: between popover-shown and popover-hidden; browser: always). */
+  popoverVisible: boolean;
   error: string | null;
 }
 
@@ -29,6 +32,7 @@ let state: AppState = {
   celebration: null,
   unlocked: [],
   popoverShownCount: 0,
+  popoverVisible: !isTauri(),
   error: null,
 };
 const subs = new Set<() => void>();
@@ -61,8 +65,22 @@ export function startStore(): void {
       });
       api.on("goal-reached", (celebration) => setState({ celebration }));
       api.on("achievements-unlocked", (list) => setState({ unlocked: [...getState().unlocked, ...list] }));
-      api.on("popover-shown", () => setState({ popoverShownCount: getState().popoverShownCount + 1 }));
+      api.on("popover-shown", () => {
+        performance.mark("ts:popover-shown");
+        setState({ popoverShownCount: getState().popoverShownCount + 1, popoverVisible: true });
+        // Settings may have changed in the dashboard window; there is no settings event.
+        void api.getSettings().then((settings) => {
+          setSoundEnabled(settings.sound);
+          setState({ settings });
+        });
+      });
+      api.on("dashboard-shown", () => {
+        void api.getSettings().then((settings) => setState({ settings }));
+      });
+      api.on("popover-hidden", () => setState({ popoverVisible: false }));
       const [snapshot, settings] = await Promise.all([api.getSnapshot(), api.getSettings()]);
+      setSoundEnabled(settings.sound);
+      performance.mark("ts:data");
       setState({ snapshot, settings, celebration: snapshot.celebration });
     })
     .catch((e: unknown) => setState({ error: String(e) }));
@@ -99,6 +117,7 @@ export async function updateSettings(patch: Parameters<TokenstreakApi["updateSet
   const api = state.api;
   if (!api) return;
   const settings = await api.updateSettings(patch);
+  setSoundEnabled(settings.sound);
   setState({ settings });
 }
 

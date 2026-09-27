@@ -1,0 +1,157 @@
+/* Tokenstreak design tokens (direction "Afterglow")
+   ------------------------------------------------------------------
+   Fonts (all open-licensed, bundle locally in the app; no runtime CDN):
+   - Instrument Serif — display numerals & headlines. SIL Open Font License 1.1.
+       npm: @fontsource/instrument-serif (400, 400-italic)
+   - Geist — UI text. SIL Open Font License 1.1 (Vercel).
+       npm: @fontsource-variable/geist   (or the `geist` package)
+   - Geist Mono — tabular figures in dense tables, log/path text. SIL OFL 1.1.
+       npm: @fontsource-variable/geist-mono
+   The mocks load these from Google Fonts for convenience only.
+
+   Theme switching: light is default. Dark applies with
+   `:root[data-theme="dark"]` or automatically via prefers-color-scheme
+   unless `data-theme="light"` is set.
+   ------------------------------------------------------------------ */
+
+:root {
+  /* ---- Type families ---- */
+  --font-display: "Instrument Serif", "New York", ui-serif, Georgia, serif;
+  --font-ui: "Geist Variable", "Geist", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* ---- Type scale (px) — display uses Instrument Serif, the rest Geist ---- */
+  --fs-hero: 64px;     /* popover today number */
+  --fs-display: 44px;  /* dashboard section numbers, card headlines */
+  --fs-title: 28px;    /* stat tile values (serif) */
+  --fs-h2: 17px;       /* section headers (Geist 600) */
+  --fs-body: 13.5px;   /* default UI text */
+  --fs-small: 12px;    /* labels, meta */
+  --fs-micro: 10.5px;  /* axis ticks, badges */
+  --lh-tight: 0.92; --lh-snug: 1.2; --lh-body: 1.45;
+  --tracking-display: -0.02em; --tracking-ui: -0.005em; --tracking-caps: 0.06em;
+  --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600; --fw-bold: 700;
+
+  /* ---- Spacing (4px grid) ---- */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-8: 32px; --sp-10: 40px; --sp-12: 48px; --sp-16: 64px;
+  --popover-w: 376px; --popover-pad: 16px; --dashboard-max: 1180px; --sidebar-w: 220px;
+
+  /* ---- Radii (continuous-corner feel; macOS squircle-ish) ---- */
+  --r-xs: 6px; --r-sm: 10px; --r-md: 14px; --r-lg: 20px; --r-xl: 28px; --r-pill: 999px;
+
+  /* ---- Brand palette: the dusk spectrum (theme-independent) ---- */
+  --dusk-apricot: #FFB27A;
+  --dusk-coral:   #FF8A6B;
+  --dusk-rose:    #F0728C;
+  --dusk-orchid:  #C46FC9;
+  --dusk-violet:  #8B6CF0;
+  --dusk-indigo:  #2A1F4A;
+  --dusk-night:   #151126;
+  --ember:        #FFC46B;   /* success / goal lit */
+  --spark:        #FFF3E0;   /* comet core */
+  --moon:         #A9D8F5;   /* efficiency accent (cool = lean) */
+  --gradient-dusk: linear-gradient(100deg, #8B6CF0 0%, #F0728C 52%, #FFB27A 100%);
+  --gradient-sky-dark: linear-gradient(180deg, #1A1433 0%, #3A2356 38%, #8A3F6E 68%, #E07A6A 90%, #F6A96F 100%);
+  --gradient-sky-light: linear-gradient(180deg, #EEE8FB 0%, #F9E5EC 48%, #FFE3CF 82%, #FFF1E2 100%);
+
+  /* ---- Tool identities (our own neutral glyphs; never vendor logos) ----
+     Claude Code = "Sun" (circle), Codex = "Tile" (rounded square), Gemini = "Prism" (triangle) */
+  --tool-claude: #F7995A;  --tool-claude-soft: #FFE0C8;
+  --tool-codex:  #EC5F80;  --tool-codex-soft:  #FFD3DE;
+  --tool-gemini: #8B6CF0;  --tool-gemini-soft: #E2DAFF;
+  --tool-other:  #9A93A8;
+
+  /* ---- Light theme ("golden hour") ---- */
+  --bg: #FFF8F1;             /* window / popover background */
+  --bg-sunken: #FBF0E6;      /* wells, heatmap empty cells */
+  --surface: #FFFFFF;        /* cards */
+  --surface-glass: rgba(255,255,255,0.62);
+  --surface-hover: #FFF3E8;
+  --ink: #231D33;            /* primary text */
+  --ink-2: #5A5068;          /* secondary text */
+  --ink-3: #8C8196;          /* tertiary / labels */
+  --line: rgba(35,29,51,0.08);
+  --line-strong: rgba(35,29,51,0.14);
+  --accent: #E85D7A;         /* interactive accent (rose, AA on --bg for text >= 14px bold) */
+  --accent-ink: #FFFFFF;
+  --focus: rgba(139,108,240,0.45);
+  --success: #E8A33A; --success-soft: #FFF0D6;
+  --warn: #E07A3A; --danger: #D9486A;
+  --heat-0: #F5E9DF; --heat-1: #FFDCC0; --heat-2: #FFB48C; --heat-3: #F4817F; --heat-4: #C9507A;  /* heatmap ramp: cream -> apricot -> coral -> rose */
+  --chart-grid: rgba(35,29,51,0.07);
+  --scrim: rgba(35,29,51,0.28);
+  --grain-opacity: 0.035;
+
+  /* ---- Shadows (warm-tinted, never pure black) ---- */
+  --shadow-1: 0 1px 2px rgba(60,30,50,0.06), 0 0 0 0.5px rgba(35,29,51,0.06);
+  --shadow-2: 0 6px 16px -6px rgba(90,40,60,0.18), 0 0 0 0.5px rgba(35,29,51,0.07);
+  --shadow-3: 0 24px 48px -16px rgba(90,40,70,0.32), 0 0 0 0.5px rgba(35,29,51,0.10);
+  --shadow-popover: 0 30px 70px -20px rgba(60,25,60,0.42), 0 0 0 0.5px rgba(0,0,0,0.14);
+  --glow-ember: 0 0 0 1px rgba(255,196,107,0.5), 0 0 24px rgba(255,170,110,0.55);
+
+  /* ---- Motion ---- */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);          /* default UI (easeOutQuint-ish) */
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: linear(0, 0.009, 0.035 2.1%, 0.141, 0.281 6.7%, 0.723 12.9%, 0.938 16.7%, 1.017, 1.077, 1.121, 1.149 24.3%, 1.159, 1.163, 1.161, 1.154 29.9%, 1.129 32.8%, 1.051 39.6%, 1.017 43.1%, 0.991, 0.977 51%, 0.974 53.8%, 0.975 57.1%, 0.997 69.8%, 1.003 76.9%, 1);  /* overshoot ~16% */
+  --ease-soft-spring: linear(0, 0.06, 0.25 9%, 0.63 20%, 0.9 31%, 1.03 42%, 1.05 50%, 1.02 62%, 1);
+  --dur-instant: 90ms;   /* press states */
+  --dur-fast: 160ms;     /* hovers, toggles */
+  --dur-base: 240ms;     /* panels, tooltips */
+  --dur-slow: 420ms;     /* popover open, number roll */
+  --dur-reveal: 2400ms;  /* first-run trail draw-in */
+  --dur-celebrate: 2600ms; /* goal-hit sequence */
+  --stagger: 40ms;
+}
+
+/* ---- Dark theme ("blue hour") ---- */
+:root[data-theme="dark"] {
+  --bg: #17132A;
+  --bg-sunken: #120F21;
+  --surface: #221C38;
+  --surface-glass: rgba(255,255,255,0.06);
+  --surface-hover: #2A2342;
+  --ink: #FFF4EA;
+  --ink-2: #CFC3D9;
+  --ink-3: #9A8EAD;
+  --line: rgba(255,244,234,0.08);
+  --line-strong: rgba(255,244,234,0.15);
+  --accent: #FF8FA5;
+  --accent-ink: #231D33;
+  --focus: rgba(170,148,255,0.55);
+  --success: #FFC46B; --success-soft: rgba(255,196,107,0.14);
+  --heat-0: #241E3B; --heat-1: #4A2C58; --heat-2: #8C3E68; --heat-3: #E0707A; --heat-4: #FFB27A;
+  --chart-grid: rgba(255,244,234,0.07);
+  --scrim: rgba(8,6,16,0.55);
+  --grain-opacity: 0.05;
+  --shadow-1: 0 1px 2px rgba(0,0,0,0.3), 0 0 0 0.5px rgba(255,255,255,0.06);
+  --shadow-2: 0 8px 20px -8px rgba(0,0,0,0.5), 0 0 0 0.5px rgba(255,255,255,0.07);
+  --shadow-3: 0 24px 48px -16px rgba(0,0,0,0.6), 0 0 0 0.5px rgba(255,255,255,0.08);
+  --shadow-popover: 0 30px 70px -20px rgba(0,0,0,0.7), 0 0 0 0.5px rgba(255,255,255,0.12);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #17132A; --bg-sunken: #120F21; --surface: #221C38; --surface-glass: rgba(255,255,255,0.06); --surface-hover: #2A2342;
+    --ink: #FFF4EA; --ink-2: #CFC3D9; --ink-3: #9A8EAD; --line: rgba(255,244,234,0.08); --line-strong: rgba(255,244,234,0.15);
+    --accent: #FF8FA5; --accent-ink: #231D33; --focus: rgba(170,148,255,0.55);
+    --success: #FFC46B; --success-soft: rgba(255,196,107,0.14);
+    --heat-0: #241E3B; --heat-1: #4A2C58; --heat-2: #8C3E68; --heat-3: #E0707A; --heat-4: #FFB27A;
+    --chart-grid: rgba(255,244,234,0.07); --scrim: rgba(8,6,16,0.55); --grain-opacity: 0.05;
+    --shadow-1: 0 1px 2px rgba(0,0,0,0.3), 0 0 0 0.5px rgba(255,255,255,0.06);
+    --shadow-2: 0 8px 20px -8px rgba(0,0,0,0.5), 0 0 0 0.5px rgba(255,255,255,0.07);
+    --shadow-3: 0 24px 48px -16px rgba(0,0,0,0.6), 0 0 0 0.5px rgba(255,255,255,0.08);
+    --shadow-popover: 0 30px 70px -20px rgba(0,0,0,0.7), 0 0 0 0.5px rgba(255,255,255,0.12);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 1ms; --dur-base: 1ms; --dur-slow: 1ms; --dur-reveal: 1ms; --dur-celebrate: 600ms; --stagger: 0ms; }
+}
+
+/* ---- Base helpers used by every mock ---- */
+.ts-num { font-family: var(--font-display); font-weight: 400; letter-spacing: var(--tracking-display); line-height: var(--lh-tight); font-variant-numeric: lining-nums; }
+.ts-tabular { font-variant-numeric: tabular-nums; }
+.ts-label { font: var(--fw-medium) var(--fs-small)/1.3 var(--font-ui); color: var(--ink-3); }
+.ts-caps { font: var(--fw-semibold) var(--fs-micro)/1 var(--font-ui); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--ink-3); }
+.ts-grain { position: relative; }
+.ts-grain::after { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: var(--grain-opacity); mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"); border-radius: inherit; }
