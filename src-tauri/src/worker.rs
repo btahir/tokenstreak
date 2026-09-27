@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::{Mutex, RwLock};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 use tokenstreak_core::api::{Achievement, AppSnapshot, Settings};
 use tokenstreak_core::engine::{parse_records, Engine};
@@ -84,6 +84,9 @@ fn run(
     // Then a normal incremental scan right away; the cached snapshot is already on screen.
     let mut pending_reply: Vec<Sender<AppSnapshot>> = Vec::new();
     let mut needs_scan = true;
+    // Publish after the next scan even if nothing changed (first scan,
+    // settings, wake, clock changes).
+    let mut force_publish = true;
     // File changes seen since the last scan (rate-limited by MIN_GAP).
     let mut dirty = false;
     let mut last_scan = Instant::now().checked_sub(MIN_GAP).unwrap_or_else(Instant::now);
@@ -96,7 +99,7 @@ fn run(
             dirty = false;
             last_scan = Instant::now();
             let t = Instant::now();
-            let (snap, fresh, settings, roots) = {
+            let (snap, fresh, settings, roots, changed) = {
                 let mut e = engine.lock();
                 let report = e.refresh();
                 e.set_watching(watcher.is_some());
@@ -113,7 +116,7 @@ fn run(
                 } else {
                     tracing::debug!(files = report.files, ms = t.elapsed().as_millis() as u64, "scan (no changes)");
                 }
-                (e.snapshot(), fresh, e.settings().clone(), e.watch_roots())
+                (e.snapshot(), fresh, e.settings().clone(), e.watch_roots(), report.changed())
             };
             // Log folders that appeared (or vanished) since the watcher started.
             let watched = watcher.as_ref().map(|w| w.watched.clone()).unwrap_or_default();
@@ -121,7 +124,15 @@ fn run(
                 tracing::info!(roots = roots.len(), "log folders changed; restarting watcher");
                 watcher = start_watcher(&engine, &tx);
             }
-            publish(&app, &engine, &latest, snap.clone(), fresh, &settings);
+            // An unchanged poll only re-checks time-based notifications; the
+            // windows and the tray are left alone (no work while idle).
+            let day_changed = latest.read().today.date != snap.today.date;
+            if changed || force_publish || day_changed || !fresh.is_empty() || !pending_reply.is_empty() {
+                publish(&app, &engine, &latest, snap.clone(), fresh, &settings);
+            } else {
+                send_notices(&app, &engine, &snap);
+            }
+            force_publish = false;
             for r in pending_reply.drain(..) {
                 let _ = r.send(snap.clone());
             }
@@ -140,15 +151,17 @@ fn run(
             }
             w
         };
-        let mut handle = |m: Msg, needs_scan: &mut bool, dirty: &mut bool, watcher: &mut Option<_>| match m {
+        let mut handle = |m: Msg, needs_scan: &mut bool, dirty: &mut bool, force: &mut bool, watcher: &mut Option<_>| match m {
             Msg::FilesChanged => *dirty = true,
             Msg::Refresh(reply) => {
                 *needs_scan = true;
+                *force = true;
                 pending_reply.extend(reply);
             }
             Msg::SettingsChanged => {
                 *watcher = start_watcher(&engine, &tx);
                 *needs_scan = true;
+                *force = true;
             }
             Msg::Publish => {
                 let (snap, settings) = {
@@ -165,10 +178,11 @@ fn run(
                     *watcher = start_watcher(&engine, &tx);
                 }
                 *needs_scan = true;
+                *force = true;
             }
         };
         match rx.recv_timeout(wait) {
-            Ok(m) => handle(m, &mut needs_scan, &mut dirty, &mut watcher),
+            Ok(m) => handle(m, &mut needs_scan, &mut dirty, &mut force_publish, &mut watcher),
             Err(RecvTimeoutError::Timeout) => {
                 // Poll, day rollover or reminder time: rescan (cheap when nothing changed).
                 engine.lock().check_system_timezone();
@@ -178,7 +192,7 @@ fn run(
         }
         // Coalesce bursts of messages.
         while let Ok(m) = rx.try_recv() {
-            handle(m, &mut needs_scan, &mut dirty, &mut watcher);
+            handle(m, &mut needs_scan, &mut dirty, &mut force_publish, &mut watcher);
         }
     }
 }
@@ -205,7 +219,7 @@ fn initial_scan(app: &AppHandle, engine: &Arc<Mutex<Engine>>, latest: &Arc<RwLoc
                 tracing::info!(ms = t.elapsed().as_millis() as u64, files = plan.files_done, "first partial snapshot");
             }
             tray::update(app, &snap, &settings);
-            let _ = app.emit("snapshot", &snap);
+            emit_snapshot(app, &snap);
             *latest.write() = Arc::new(snap);
             let _ = app.emit("scan-progress", plan.progress("initial"));
         }
@@ -250,6 +264,18 @@ fn start_watcher(engine: &Arc<Mutex<Engine>>, tx: &Sender<Msg>) -> Option<tokens
     }
 }
 
+/// Sends a snapshot to the open windows. A hidden popover is skipped (it is
+/// brought up to date the moment it opens, see `tray::show_popover`), so its
+/// web view doesn't re-render off screen.
+fn emit_snapshot(app: &AppHandle, snap: &AppSnapshot) {
+    if app.get_webview_window("dashboard").is_some() {
+        let _ = app.emit_to("dashboard", "snapshot", snap);
+    }
+    if tray::popover(app).is_some_and(|w| w.is_visible().unwrap_or(true)) {
+        let _ = app.emit_to("popover", "snapshot", snap);
+    }
+}
+
 fn notify(app: &AppHandle, title: &str, body: &str) {
     if let Err(e) = app.notification().builder().title(title).body(body).show() {
         tracing::warn!(error = %e, "notification failed");
@@ -269,12 +295,31 @@ fn publish(
     let prev = latest.read().clone();
     let crossed = snap.today.met && !(prev.today.met && prev.today.date == snap.today.date);
     tray::update(app, &snap, settings);
-    let _ = app.emit("snapshot", &snap);
+    emit_snapshot(app, &snap);
     if crossed {
         if let Some(c) = &snap.celebration {
             let _ = app.emit("goal-reached", c);
         }
     }
+    let quiet = send_notices(app, engine, &snap);
+    // Only achievements unlocked by live activity notify; the first-run reveal is shown in-app.
+    let live: Vec<Achievement> =
+        fresh.into_iter().filter(|a| a.unlocked_at.as_deref() == Some(snap.today.date.as_str())).collect();
+    if !live.is_empty() && snap.onboarding.completed {
+        let _ = app.emit("achievements-unlocked", &live);
+        if settings.notifications.achievements && !quiet {
+            for a in live.iter().take(2) {
+                notify(app, &format!("Achievement unlocked: {}", a.title), &a.description);
+            }
+        }
+    }
+    *latest.write() = Arc::new(snap);
+}
+
+/// Sends whichever goal, streak-at-risk and weekly-recap notifications are
+/// due (each at most once; markers persist). Returns whether quiet hours are on.
+fn send_notices(app: &AppHandle, engine: &Arc<Mutex<Engine>>, snap: &AppSnapshot) -> bool {
+    let snap = snap.clone();
     let (goal, at_risk, recap, quiet) = {
         let mut e = engine.lock();
         (e.take_goal_notice(&snap), e.take_at_risk_notice(&snap), e.take_recap_notice(&snap), e.in_quiet_hours())
@@ -301,18 +346,7 @@ fn publish(
         };
         notify(app, "Your week in tokens", &body);
     }
-    // Only achievements unlocked by live activity notify; the first-run reveal is shown in-app.
-    let live: Vec<Achievement> =
-        fresh.into_iter().filter(|a| a.unlocked_at.as_deref() == Some(snap.today.date.as_str())).collect();
-    if !live.is_empty() && snap.onboarding.completed {
-        let _ = app.emit("achievements-unlocked", &live);
-        if settings.notifications.achievements && !quiet {
-            for a in live.iter().take(2) {
-                notify(app, &format!("Achievement unlocked: {}", a.title), &a.description);
-            }
-        }
-    }
-    *latest.write() = Arc::new(snap);
+    quiet
 }
 
 pub fn human(n: u64) -> String {

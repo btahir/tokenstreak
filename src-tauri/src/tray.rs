@@ -27,6 +27,8 @@ const ICONS: [&[u8]; 5] = [
 
 static LAST_HIDE_MS: AtomicU64 = AtomicU64::new(0);
 static ICON_BUCKET: AtomicU64 = AtomicU64::new(u64::MAX);
+/// Last title and tooltip set, so unchanged values don't make AppKit relayout.
+static LAST_TEXT: Mutex<(Option<String>, String)> = Mutex::new((None, String::new()));
 /// When the last open was requested (click or shortcut), for the open-latency log.
 static OPEN_REQUESTED: Mutex<Option<Instant>> = Mutex::new(None);
 
@@ -164,6 +166,9 @@ pub fn show_popover(app: &AppHandle) {
     // The window is created hidden at launch and the snapshot is in memory,
     // so showing it is immediate; fresh numbers follow (incremental, ~30 ms).
     let t = Instant::now();
+    // Hidden, the popover gets no snapshot events; bring it up to date first.
+    let latest = app.state::<Core>().snapshot();
+    let _ = app.emit_to("popover", "snapshot", &*latest);
     let _ = w.show();
     let _ = w.set_focus();
     let _ = app.emit_to("popover", "popover-shown", ());
@@ -469,14 +474,22 @@ pub fn update(app: &AppHandle, snap: &AppSnapshot, settings: &Settings) {
             let _ = tray.set_icon_as_template(true);
         }
     }
-    let _ = tray.set_title(title_for(snap, settings.menu_bar).as_deref());
+    let title = title_for(snap, settings.menu_bar);
     let tip = format!(
         "Tokenstreak: {} today ({:.0}% of goal), {}-day streak",
         human(snap.today.tokens.total),
         snap.today.progress * 100.0,
         snap.streak.current
     );
-    let _ = tray.set_tooltip(Some(tip));
+    let mut last = LAST_TEXT.lock();
+    if last.0 != title {
+        let _ = tray.set_title(title.as_deref());
+        last.0 = title;
+    }
+    if last.1 != tip {
+        let _ = tray.set_tooltip(Some(tip.as_str()));
+        last.1 = tip;
+    }
 }
 
 #[cfg(test)]
