@@ -121,7 +121,49 @@ function Detect({ snap, next }: { snap: AppSnapshot; next: () => void }) {
       </div>
       <div className="onb__art">
         <TrailCanvas data={DAY0} theme={theme} variant="popover" layout={{ soloX: 0.5, baseY: 0.62 }} reducedMotion={reduced} ariaLabel="A dusk sky with a single spark waiting" />
+        <Strands tools={tools} resolved={resolved} />
       </div>
+    </div>
+  );
+}
+
+/** Each agent found drifts in as a strand of light toward the waiting spark. */
+const STRANDS = [
+  { from: [24, 22], ctrl: [26, 60], label: [26, 18] },
+  { from: [76, 18], ctrl: [78, 52], label: [74, 14] },
+  { from: [80, 90], ctrl: [66, 84], label: [74, 92] },
+] as const;
+const SPARK = [50, 70] as const;
+
+function Strands({ tools, resolved }: { tools: ReturnType<typeof toolDays>; resolved: number }) {
+  const shown = tools.map((t, i) => ({ ...t, i })).filter((t) => t.found && t.used && resolved > t.i);
+  return (
+    <div className="strands" aria-hidden>
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+        {shown.map((t, k) => {
+          const s = STRANDS[k]!;
+          return (
+            <g key={t.tool}>
+              <defs>
+                <linearGradient id={`strand-${t.tool}`} gradientUnits="userSpaceOnUse" x1={s.from[0]} y1={s.from[1]} x2={SPARK[0]} y2={SPARK[1]}>
+                  <stop offset="0" stopColor={`var(--tool-${t.tool})`} stopOpacity=".95" />
+                  <stop offset="1" stopColor={`var(--tool-${t.tool})`} stopOpacity=".1" />
+                </linearGradient>
+              </defs>
+              <path className="strand" d={`M${s.from[0]} ${s.from[1]}Q${s.ctrl[0]} ${s.ctrl[1]} ${SPARK[0]} ${SPARK[1]}`} stroke={`url(#strand-${t.tool})`} />
+            </g>
+          );
+        })}
+      </svg>
+      {shown.map((t, k) => {
+        const s = STRANDS[k]!;
+        return (
+          <span key={t.tool} className="strand__chip" style={{ left: `${s.label[0]}%`, top: `${s.label[1]}%` }}>
+            <Glyph tool={t.tool} />
+            {TOOL_NAMES[t.tool]} · {plural(t.days, "day")}
+          </span>
+        );
+      })}
     </div>
   );
 }

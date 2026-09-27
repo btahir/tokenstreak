@@ -301,6 +301,12 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px 
 .onb__privacy { margin-top: auto; padding-top: 22px; font-size: 12px; }
 .onb__foot { display: flex; justify-content: space-between; align-items: center; margin-top: 20px; gap: 16px; }
 .onb__art { position: relative; overflow: hidden; }
+.strands { position: absolute; inset: 0; pointer-events: none; }
+.strands svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.strand { fill: none; stroke-width: 2.2; stroke-linecap: round; vector-effect: non-scaling-stroke; animation: strandIn 1.2s var(--ease-out) both; }
+@keyframes strandIn { from { opacity: 0; } }
+.strand__chip { position: absolute; transform: translate(-50%, -50%); display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 12px 0 9px; border-radius: 99px; background: var(--pill); border: 1px solid var(--pill-line); color: var(--hud); font: 600 12px var(--font-ui); white-space: nowrap; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); animation: enter var(--dur-slow) var(--ease-out) both; }
+@media (prefers-reduced-motion: reduce) { .strand { animation: none; } }
 .onb__art canvas, .onb__full canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .onb__full { position: absolute; inset: 0; animation: tipIn var(--dur-slow) var(--ease-out) both; }
 .onb__over { position: absolute; inset: 0; padding: clamp(64px, 10vh, 96px) clamp(40px, 5vw, 64px) 36px; display: flex; flex-direction: column; color: var(--hud); pointer-events: none; }
