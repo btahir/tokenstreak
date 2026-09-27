@@ -131,3 +131,17 @@ test("achievements: all badges with dates or progress", async ({ page }) => {
   await expect(grid.locator(".badge--locked")).toHaveCount(2);
   await expect(grid).toContainText("Unlocked");
 });
+
+test.describe("reduced motion", () => {
+  test.use({ reducedMotion: "reduce" });
+  test("the goal moment still lands as a glow and a toast", async ({ page }) => {
+    const con = watchConsole(page);
+    await page.setViewportSize({ width: 380, height: 700 });
+    await page.goto(url({ view: "popover", preset: "goal-hit", theme: "light" }));
+    await mock(page);
+    await page.evaluate(() => (window as unknown as { __tokenstreakMock: { triggerGoalReached: () => void } }).__tokenstreakMock.triggerGoalReached());
+    await expect(page.getByTestId("goal-toast")).toBeVisible();
+    await expect(page.locator(".progress--lit")).toBeVisible();
+    con.assertClean();
+  });
+});

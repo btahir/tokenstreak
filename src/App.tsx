@@ -4,10 +4,11 @@
 import { lazy, Suspense, useEffect } from "react";
 import { isTauri, urlOptions } from "./api";
 import { useAppState, useSettings } from "./state/store";
-import { Dashboard } from "./views/dashboard/Dashboard";
 import { DevPanel } from "./views/DevPanel";
 import { Popover } from "./views/popover/Popover";
 
+// The popover window loads only what it needs; the dashboard is its own chunk.
+const Dashboard = lazy(() => import("./views/dashboard/Dashboard").then((m) => ({ default: m.Dashboard })));
 const Lab = import.meta.env.VITE_INCLUDE_MOCK ? lazy(() => import("./views/Lab").then((m) => ({ default: m.Lab }))) : null;
 
 export function App() {
@@ -37,7 +38,9 @@ export function App() {
           <Lab />
         </Suspense>
       ) : opts.view === "dashboard" ? (
-        <Dashboard />
+        <Suspense fallback={<div className="win win--loading" />}>
+          <Dashboard />
+        </Suspense>
       ) : (
         <Popover />
       )}
