@@ -700,6 +700,15 @@ impl Engine {
         Some(n)
     }
 
+    /// A weekly recap that is due now; marks it as sent.
+    pub fn take_recap_notice(&mut self, snap: &AppSnapshot) -> Option<crate::notify::RecapNotice> {
+        let now = crate::notify::Now::at(&self.clock, self.now_ms());
+        let n = crate::notify::recap_notice(snap, &self.settings, &self.state, now)?;
+        self.state.recap_sent_for = Some(n.week_start.clone());
+        self.persist();
+        Some(n)
+    }
+
     /// Whether notifications are muted right now (quiet hours).
     pub fn in_quiet_hours(&self) -> bool {
         let now = crate::notify::Now::at(&self.clock, self.now_ms());

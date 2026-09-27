@@ -126,7 +126,9 @@ pub fn set_launch_at_login(app: &AppHandle, on: bool) {
     let core = app.state::<Core>();
     let changed = core.engine.lock().settings().launch_at_login != now;
     if changed {
-        let _ = core.engine.lock().update_settings(&serde_json::json!({ "launchAtLogin": now }));
+        if let Ok(s) = core.engine.lock().update_settings(&serde_json::json!({ "launchAtLogin": now })) {
+            let _ = app.emit("settings", &s);
+        }
     }
     core.send(Msg::Publish);
 }

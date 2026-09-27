@@ -5,7 +5,7 @@
 use std::sync::mpsc::channel;
 use std::time::Duration;
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 use tokenstreak_core::api::*;
 
@@ -60,17 +60,38 @@ pub fn update_settings(app: AppHandle, core: State<'_, Core>, mut patch: serde_j
     } else {
         core.send(Msg::Publish);
     }
+    // Both webviews follow settings changes (theme, sound) at once.
+    let _ = app.emit("settings", &after);
     Ok(after)
 }
 
+/// "Locate…" for a tool whose logs weren't found: asks for its folder and
+/// saves it as the tool's custom path. Returns the new settings, or `None`
+/// when the user cancels. Claude Code: the folder holding `projects/` (or
+/// `projects/` itself); Codex: its home (holding `sessions/`); Gemini: its
+/// `tmp/` folder.
 #[tauri::command(async)]
-pub fn set_goals(core: State<'_, Core>, goals: GoalsInput) -> Res<AppSnapshot> {
-    let snap = {
+pub fn locate_tool(app: AppHandle, core: State<'_, Core>, tool: tokenstreak_core::Tool) -> Res<Option<Settings>> {
+    use tauri_plugin_dialog::DialogExt;
+    let title = format!("Locate the {} log folder", tool.display_name());
+    let Some(picked) = app.dialog().file().set_title(title).blocking_pick_folder() else { return Ok(None) };
+    let path = picked.into_path().map_err(|e| e.to_string())?;
+    let patch = serde_json::json!({ "tools": { tool.as_str(): { "enabled": true, "customPaths": [path.display().to_string()] } } });
+    let after = core.engine.lock().update_settings(&patch)?;
+    core.send(Msg::SettingsChanged);
+    let _ = app.emit("settings", &after);
+    Ok(Some(after))
+}
+
+#[tauri::command(async)]
+pub fn set_goals(app: AppHandle, core: State<'_, Core>, goals: GoalsInput) -> Res<AppSnapshot> {
+    let (snap, settings) = {
         let mut e = core.engine.lock();
         e.set_goals(&goals)?;
-        e.snapshot()
+        (e.snapshot(), e.settings().clone())
     };
     core.send(Msg::Publish);
+    let _ = app.emit("settings", &settings);
     Ok(snap)
 }
 

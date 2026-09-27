@@ -275,9 +275,9 @@ fn publish(
             let _ = app.emit("goal-reached", c);
         }
     }
-    let (goal, at_risk, quiet) = {
+    let (goal, at_risk, recap, quiet) = {
         let mut e = engine.lock();
-        (e.take_goal_notice(&snap), e.take_at_risk_notice(&snap), e.in_quiet_hours())
+        (e.take_goal_notice(&snap), e.take_at_risk_notice(&snap), e.take_recap_notice(&snap), e.in_quiet_hours())
     };
     if let Some(n) = goal {
         let body = if n.streak > 1 {
@@ -291,6 +291,15 @@ fn publish(
         let title = format!("Your {}-day streak is at risk", n.streak);
         let body = format!("{} more tokens today keeps it alive.", human(n.remaining));
         notify(app, &title, &body);
+    }
+    if let Some(r) = recap {
+        let days = if r.days_met == 1 { "1 goal day".to_string() } else { format!("{} goal days", r.days_met) };
+        let body = if r.goal_met {
+            format!("{} tokens, {days}, weekly goal met. Streak: {} days.", human(r.tokens), r.streak)
+        } else {
+            format!("{} tokens over {} active days, {days}. Streak: {} days.", human(r.tokens), r.active_days, r.streak)
+        };
+        notify(app, "Your week in tokens", &body);
     }
     // Only achievements unlocked by live activity notify; the first-run reveal is shown in-app.
     let live: Vec<Achievement> =

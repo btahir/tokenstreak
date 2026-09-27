@@ -119,6 +119,7 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(window_state_plugin())
         .plugin(shortcut::plugin())
+        .plugin(tauri_plugin_dialog::init())
         .setup(setup)
         .invoke_handler(tauri::generate_handler![
             commands::get_snapshot,
@@ -142,6 +143,7 @@ pub fn run() {
             commands::open_external,
             commands::save_export,
             commands::reveal_logs,
+            commands::locate_tool,
         ])
         .build(tauri::generate_context!());
     let app = match app {

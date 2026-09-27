@@ -4,4 +4,8 @@ export type ShareSettings = {
 /**
  * Project names appear on share cards only when true.
  */
-showProjectNames: boolean, showCost: boolean, };
+showProjectNames: boolean, showCost: boolean, 
+/**
+ * Show the per-tool mix on share cards.
+ */
+showAgentMix: boolean, };

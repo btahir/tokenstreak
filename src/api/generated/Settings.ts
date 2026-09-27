@@ -21,7 +21,11 @@ timezone: string | null, tools: ToolsSettings, notifications: NotificationSettin
 /**
  * Celebration sound (off by default).
  */
-sound: boolean, share: ShareSettings, 
+sound: boolean, 
+/**
+ * Sound volume, 0..1.
+ */
+soundVolume: number, share: ShareSettings, 
 /**
  * Keep history from log files the tools have since deleted.
  */

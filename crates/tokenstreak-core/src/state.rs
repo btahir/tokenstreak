@@ -31,6 +31,8 @@ pub struct AppState {
     pub goal_notified_on: Option<String>,
     /// Last local date the streak-at-risk reminder was sent.
     pub at_risk_notified_on: Option<String>,
+    /// Start date of the last week a weekly recap was sent for.
+    pub recap_sent_for: Option<String>,
 }
 
 pub struct Store {

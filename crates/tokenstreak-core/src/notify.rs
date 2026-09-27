@@ -11,6 +11,8 @@
 //! - Streak at risk (opt-in): once per local day, at or after the reminder
 //!   time, while a streak of at least one day is alive and today's goal is not
 //!   met yet; never on a rest day (a rest day cannot break the streak).
+//! - Weekly recap (opt-in): once per week, on the first day of the week at
+//!   or after 09:00, summarising the week that just ended (if it had usage).
 
 use crate::api::{AppSnapshot, NotificationSettings, QuietHours, Settings};
 use crate::state::AppState;
@@ -92,6 +94,45 @@ pub fn at_risk_notice(snap: &AppSnapshot, settings: &Settings, state: &AppState,
         && !in_quiet_hours(&n.quiet_hours, now.minute)
         && state.at_risk_notified_on.as_deref() != Some(snap.today.date.as_str());
     due.then_some(AtRiskNotice { streak: snap.streak.current, remaining: snap.today.remaining })
+}
+
+/// A weekly recap to send now.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecapNotice {
+    /// Start date of the week summarised.
+    pub week_start: String,
+    pub tokens: u64,
+    pub days_met: u32,
+    pub active_days: u32,
+    pub goal_met: bool,
+    pub streak: u32,
+}
+
+const RECAP_MINUTE: u16 = 9 * 60;
+
+pub fn recap_notice(snap: &AppSnapshot, settings: &Settings, state: &AppState, now: Now) -> Option<RecapNotice> {
+    let n = &settings.notifications;
+    if !n.weekly_recap || !snap.onboarding.completed || now.minute < RECAP_MINUTE || in_quiet_hours(&n.quiet_hours, now.minute) {
+        return None;
+    }
+    // Today must be the first day of the current week.
+    let this_week = &snap.goals.this_week;
+    if this_week.start != snap.today.date {
+        return None;
+    }
+    let last = snap.weeks.iter().rev().find(|w| w.start < this_week.start)?;
+    if last.total == 0 || state.recap_sent_for.as_deref() == Some(last.start.as_str()) {
+        return None;
+    }
+    let days: Vec<_> = snap.days.iter().filter(|d| d.date >= last.start && d.date <= last.end).collect();
+    Some(RecapNotice {
+        week_start: last.start.clone(),
+        tokens: last.total,
+        days_met: days.iter().filter(|d| d.met).count() as u32,
+        active_days: days.iter().filter(|d| d.total > 0).count() as u32,
+        goal_met: last.met.unwrap_or(false),
+        streak: snap.streak.current,
+    })
 }
 
 /// Milliseconds until the reminder should next be evaluated today (the
@@ -230,6 +271,35 @@ mod tests {
         let mut off = s.clone();
         off.notifications.goal_reached = false;
         assert!(goal_notice(&sn, &off, &AppState::default(), at(15, 0)).is_none());
+    }
+
+    #[test]
+    fn weekly_recap_once_on_the_first_day_of_the_week() {
+        let mut s = Settings::default();
+        s.notifications.weekly_recap = true;
+        let mut sn = snap(false, 4);
+        sn.today.date = "2026-09-28".into(); // Monday
+        sn.goals.this_week = WeekProgress { start: "2026-09-28".into(), end: "2026-10-04".into(), ..Default::default() };
+        sn.weeks = vec![
+            PeriodRow { start: "2026-09-21".into(), end: "2026-09-27".into(), total: 9000, met: Some(true), ..Default::default() },
+            PeriodRow { start: "2026-09-28".into(), end: "2026-10-04".into(), ..Default::default() },
+        ];
+        sn.days = ["2026-09-21", "2026-09-22", "2026-09-27"]
+            .iter()
+            .enumerate()
+            .map(|(i, d)| DayRow { date: (*d).into(), total: 3000, met: i != 1, ..Default::default() })
+            .collect();
+        let mut st = AppState::default();
+        assert!(recap_notice(&sn, &s, &st, at(8, 59)).is_none());
+        let r = recap_notice(&sn, &s, &st, at(9, 0)).unwrap();
+        assert_eq!((r.tokens, r.days_met, r.active_days, r.goal_met), (9000, 2, 3, true));
+        st.recap_sent_for = Some("2026-09-21".into());
+        assert!(recap_notice(&sn, &s, &st, at(10, 0)).is_none());
+        // Not the first day of the week, or off.
+        let mut tue = sn.clone();
+        tue.today.date = "2026-09-29".into();
+        assert!(recap_notice(&tue, &s, &AppState::default(), at(10, 0)).is_none());
+        assert!(recap_notice(&sn, &Settings::default(), &AppState::default(), at(10, 0)).is_none());
     }
 
     #[test]

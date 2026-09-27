@@ -173,6 +173,11 @@ pub struct DayRow {
     pub gemini: u64,
     #[ts(type = "number")]
     pub cache_read: u64,
+    /// Uncached input tokens (excludes cache reads and writes).
+    #[ts(type = "number")]
+    pub input: u64,
+    #[ts(type = "number")]
+    pub cache_write: u64,
     pub messages: u32,
     pub sessions: u32,
     /// Daily goal in effect on this date.
@@ -508,6 +513,9 @@ pub struct NotificationSettings {
     pub reminder_time: String,
     /// No notifications of any kind during these hours.
     pub quiet_hours: QuietHours,
+    /// A short recap of last week, once, on the first day of the week
+    /// (at or after 09:00, off by default).
+    pub weekly_recap: bool,
 }
 
 impl Default for NotificationSettings {
@@ -518,6 +526,7 @@ impl Default for NotificationSettings {
             streak_at_risk: false,
             reminder_time: "20:00".into(),
             quiet_hours: QuietHours::default(),
+            weekly_recap: false,
         }
     }
 }
@@ -543,11 +552,18 @@ impl Default for QuietHours {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase", default)]
 #[ts(export)]
-#[derive(Default)]
 pub struct ShareSettings {
     /// Project names appear on share cards only when true.
     pub show_project_names: bool,
     pub show_cost: bool,
+    /// Show the per-tool mix on share cards.
+    pub show_agent_mix: bool,
+}
+
+impl Default for ShareSettings {
+    fn default() -> Self {
+        Self { show_project_names: false, show_cost: false, show_agent_mix: true }
+    }
 }
 
 
@@ -583,6 +599,8 @@ pub struct Settings {
     pub theme: Theme,
     /// Celebration sound (off by default).
     pub sound: bool,
+    /// Sound volume, 0..1.
+    pub sound_volume: f64,
     pub share: ShareSettings,
     /// Keep history from log files the tools have since deleted.
     pub keep_deleted_history: bool,
@@ -607,6 +625,7 @@ impl Default for Settings {
             menu_bar: MenuBarDisplay::Icon,
             theme: Theme::System,
             sound: false,
+            sound_volume: 0.6,
             share: ShareSettings::default(),
             keep_deleted_history: true,
             codex_fast_tier: None,

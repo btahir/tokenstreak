@@ -14,4 +14,9 @@ reminderTime: string,
 /**
  * No notifications of any kind during these hours.
  */
-quietHours: QuietHours, };
+quietHours: QuietHours, 
+/**
+ * A short recap of last week, once, on the first day of the week
+ * (at or after 09:00, off by default).
+ */
+weeklyRecap: boolean, };

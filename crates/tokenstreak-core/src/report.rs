@@ -276,6 +276,8 @@ fn day_row(d: Date, a: Option<&DayAgg>, s: &StreakResult) -> DayRow {
         codex: a.by_tool[1],
         gemini: a.by_tool[2],
         cache_read: a.tokens.cache_read,
+        input: a.tokens.input,
+        cache_write: a.tokens.cache_write,
         messages: a.messages,
         sessions: a.sessions,
         goal: ev.goal,
