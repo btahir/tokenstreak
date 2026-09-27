@@ -824,15 +824,29 @@ impl Engine {
     }
 }
 
-/// Tags the allocator's memory as application memory. mimalloc's default VM
-/// tag (100) is `VM_MEMORY_IOACCELERATOR`, so `footprint`, `vmmap` and
-/// Instruments reported the Rust heap as GPU memory. Call before the first
-/// allocation (a static initializer); later calls only affect new mappings.
-pub fn label_heap_memory() {
+/// Configures mimalloc for a long-running app. Call from a static
+/// initializer, before the first allocation.
+///
+/// - Tags its memory as application memory. mimalloc's default VM tag (100)
+///   is `VM_MEMORY_IOACCELERATOR`, so `footprint`, `vmmap` and Instruments
+///   reported the Rust heap as GPU memory.
+/// - Purges freed pages at once instead of after mimalloc's default delay.
+///   The app rebuilds its ledger on every rescan (every 8 s while an agent
+///   writes). With the delay, freed pages stayed counted in the footprint
+///   and the next rebuild dirtied fresh ones: under continuous writes the
+///   footprint climbed from ~90 MB to 131–151 MB within minutes. With 0 it
+///   stays at 86–102 MB for the same CPU (measured with `live-logs`; 50 ms
+///   still let it reach 133 MB).
+pub fn configure_allocator() {
     const VM_MEMORY_APPLICATION_SPECIFIC_1: std::os::raw::c_long = 240;
-    // SAFETY: plain FFI call that sets an integer option.
+    const PURGE_DELAY_MS: std::os::raw::c_long = 0;
+    // `mi_option_purge_delay` in the vendored mimalloc v3 `mimalloc.h`
+    // (libmimalloc-sys 0.1.49 has no constant for it).
+    const MI_OPTION_PURGE_DELAY: libmimalloc_sys::mi_option_t = 15;
+    // SAFETY: plain FFI calls that set integer options.
     unsafe {
         libmimalloc_sys::mi_option_set(libmimalloc_sys::mi_option_os_tag, VM_MEMORY_APPLICATION_SPECIFIC_1);
+        libmimalloc_sys::mi_option_set(MI_OPTION_PURGE_DELAY, PURGE_DELAY_MS);
     }
 }
 
