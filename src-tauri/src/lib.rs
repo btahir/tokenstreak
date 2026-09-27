@@ -3,6 +3,7 @@
 
 mod commands;
 mod logging;
+mod panel;
 mod qa;
 mod shortcut;
 mod system;
@@ -55,6 +56,8 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let core = worker::start(app.handle(), engine)?;
     app.manage(core);
     tray::create(app.handle())?;
+    // Before any show: a non-activating panel that opens over full-screen apps.
+    panel::install(app.handle());
 
     if let Some(accel) = shortcut_setting.as_deref() {
         if let Err(e) = shortcut::apply(app.handle(), Some(accel)) {
@@ -145,7 +148,11 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(window_state_plugin())
         .plugin(shortcut::plugin())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+    // The popover's panel store (see `panel`).
+    #[cfg(target_os = "macos")]
+    let app = app.plugin(tauri_nspanel::init());
+    let app = app
         .setup(setup)
         .invoke_handler(tauri::generate_handler![
             commands::get_snapshot,

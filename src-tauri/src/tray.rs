@@ -176,8 +176,7 @@ pub fn show_popover(app: &AppHandle) {
     // Hidden, the popover gets no snapshot events; bring it up to date first.
     let latest = app.state::<Core>().snapshot();
     let _ = app.emit_to("popover", "snapshot", &*latest);
-    let _ = w.show();
-    let _ = w.set_focus();
+    crate::panel::show(app, &w);
     let _ = app.emit_to("popover", "popover-shown", ());
     tracing::debug!(us = t.elapsed().as_micros() as u64, "popover shown");
     app.state::<Core>().send(Msg::Refresh(None));
@@ -195,6 +194,9 @@ pub fn hide_popover(app: &AppHandle) {
         if w.is_visible().unwrap_or(false) {
             let _ = w.hide();
             LAST_HIDE_MS.store(now_ms(), Ordering::Relaxed);
+            if crate::qa::enabled() {
+                tracing::info!("qa: popover hidden");
+            }
             let _ = app.emit_to("popover", "popover-hidden", ());
         }
     }

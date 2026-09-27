@@ -9,7 +9,11 @@
 //!   `--popover` (toggle), `--goal-moment` (play the goal-reached moment in
 //!   the popover), `--snapshot <path.png> [--window popover|dashboard]`
 //!   (save that window's web view as a PNG with WKWebView's own
-//!   `takeSnapshot`, so no Screen Recording permission is needed).
+//!   `takeSnapshot`, so no Screen Recording permission is needed),
+//!   `--popover-in <ms>` (toggle the popover after a delay, so a script can
+//!   bring another app to the front, or a full-screen Space, first; the
+//!   log line `qa: popover panel shown` then says whether the app was
+//!   activated and which app is frontmost).
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -39,6 +43,7 @@ pub fn data_dir() -> PathBuf {
 pub enum Debug {
     GoalMoment,
     Snapshot { path: PathBuf, window: String },
+    PopoverIn(u64),
 }
 
 /// Debug flags in `args` (the program name first).
@@ -47,6 +52,9 @@ pub fn parse(args: &[String]) -> Vec<Debug> {
     let value = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     if args.iter().any(|a| a == "--goal-moment") {
         out.push(Debug::GoalMoment);
+    }
+    if let Some(ms) = value("--popover-in").and_then(|v| v.parse().ok()) {
+        out.push(Debug::PopoverIn(ms));
     }
     if let Some(path) = value("--snapshot") {
         let window = value("--window").unwrap_or_else(|| "popover".into());
@@ -68,6 +76,13 @@ pub fn run(app: &AppHandle, actions: Vec<Debug>) {
         match a {
             Debug::GoalMoment => goal_moment(app),
             Debug::Snapshot { path, window } => snapshot(app, &window, path),
+            Debug::PopoverIn(ms) => {
+                let handle = app.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(ms));
+                    tray::toggle_popover(&handle);
+                });
+            }
         }
     }
 }
@@ -191,5 +206,7 @@ mod tests {
             parse(&args(&["tokenstreak", "--window", "dashboard", "--snapshot", "/tmp/b.png"])),
             vec![Debug::Snapshot { path: "/tmp/b.png".into(), window: "dashboard".into() }]
         );
+        assert_eq!(parse(&args(&["tokenstreak", "--popover-in", "1500"])), vec![Debug::PopoverIn(1500)]);
+        assert!(parse(&args(&["tokenstreak", "--popover-in", "soon"])).is_empty());
     }
 }
