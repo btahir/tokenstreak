@@ -91,7 +91,14 @@ pub fn compute(ledger: &Ledger, settings: &Settings, state: &AppState, clock: &C
     let totals: BTreeMap<Date, u64> = days.iter().map(|(d, a)| (*d, a.tokens.total)).collect();
     let today = clock.date_of(now_ms);
     let goals = effective_goals(state, &totals, today);
-    let streaks = goals::evaluate(&totals, &goals, today, &settings.rest_days, settings.week_starts_on);
+    let streaks = goals::evaluate_with(
+        &totals,
+        &goals,
+        today,
+        &settings.rest_days,
+        settings.week_starts_on,
+        settings.streak_freezes,
+    );
     Computed { days, totals, goals, streaks, today }
 }
 
@@ -201,6 +208,15 @@ pub fn snapshot(input: SnapshotInput<'_>) -> AppSnapshot {
         weekly_current: c.streaks.weekly_current,
         weekly_longest: c.streaks.weekly_longest,
         rest_days: settings.rest_days.clone(),
+        freezes_enabled: settings.streak_freezes,
+        freezes_held: c.streaks.freezes_held,
+        freezes_earned: c.streaks.freezes_earned,
+        freezes_used: c.streaks.freezes_used,
+        next_freeze_in: if !settings.streak_freezes || c.streaks.freezes_held >= goals::FREEZE_CAP {
+            0
+        } else {
+            goals::FREEZE_EVERY - c.streaks.freeze_progress
+        },
     };
 
     let lifetime = lifetime(ledger, &c);
@@ -283,6 +299,7 @@ fn day_row(d: Date, a: Option<&DayAgg>, s: &StreakResult) -> DayRow {
         goal: ev.goal,
         met: ev.met,
         streak: ev.streak,
+        frozen: ev.frozen,
     }
 }
 

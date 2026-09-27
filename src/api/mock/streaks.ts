@@ -6,7 +6,7 @@
 import type { DayRow, GoalChange, WeekStart } from "../types";
 
 export interface StreakEval {
-  days: { date: string; goal: number; met: boolean; streak: number }[];
+  days: { date: string; goal: number; met: boolean; streak: number; frozen: boolean }[];
   current: number;
   currentStart: string | null;
   longest: number;
@@ -15,7 +15,16 @@ export interface StreakEval {
   todayMet: boolean;
   weeklyCurrent: number;
   weeklyLongest: number;
+  freezesHeld: number;
+  freezesEarned: number;
+  freezesUsed: number;
+  /** Goal days in the current streak since the last freeze was earned. */
+  freezeProgress: number;
 }
+
+/** Goal days in a row that earn a streak freeze, and the most held at once (goals.rs rule 6). */
+export const FREEZE_EVERY = 7;
+export const FREEZE_CAP = 2;
 
 const DAY = 86_400_000;
 
@@ -51,6 +60,7 @@ export function evaluate(
   today: string,
   restDays: number[],
   ws: WeekStart,
+  freezes = false,
 ): StreakEval {
   const r: StreakEval = {
     days: [],
@@ -62,18 +72,24 @@ export function evaluate(
     todayMet: false,
     weeklyCurrent: 0,
     weeklyLongest: 0,
+    freezesHeld: 0,
+    freezesEarned: 0,
+    freezesUsed: 0,
+    freezeProgress: 0,
   };
   const keys = [...totals.keys()].sort();
   if (keys.length === 0) return r;
   const first = keys[0]! < today ? keys[0]! : today;
   let run = 0;
   let runStart: string | null = null;
+  let sinceEarn = 0;
   for (let t = toUtc(first); t <= toUtc(today); t += DAY) {
     const d = fromUtc(t);
     const tokens = totals.get(d) ?? 0;
     const goal = goalAt(history, d)?.daily ?? 0;
     const met = goal > 0 && tokens >= goal;
     const rest = restDays.includes(weekdayIndex(d));
+    let frozen = false;
     if (met) {
       if (run === 0) runStart = d;
       run += 1;
@@ -82,15 +98,34 @@ export function evaluate(
         r.longestStart = runStart;
         r.longestEnd = d;
       }
+      if (freezes) {
+        sinceEarn += 1;
+        if (sinceEarn === FREEZE_EVERY) {
+          sinceEarn = 0;
+          if (r.freezesHeld < FREEZE_CAP) {
+            r.freezesHeld += 1;
+            r.freezesEarned += 1;
+          }
+        }
+      }
     } else if (!(rest || d === today)) {
-      run = 0;
-      runStart = null;
+      if (freezes && run > 0 && r.freezesHeld > 0) {
+        r.freezesHeld -= 1;
+        r.freezesUsed += 1;
+        frozen = true;
+        sinceEarn = 0;
+      } else {
+        run = 0;
+        runStart = null;
+        sinceEarn = 0;
+      }
     }
-    r.days.push({ date: d, goal, met, streak: met ? run : 0 });
+    r.days.push({ date: d, goal, met, streak: met ? run : 0, frozen });
     if (d === today) r.todayMet = met;
   }
   r.current = run;
   r.currentStart = run > 0 ? runStart : null;
+  r.freezeProgress = sinceEarn;
 
   const thisWeek = weekStart(today, ws);
   let wrun = 0;

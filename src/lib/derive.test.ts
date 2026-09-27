@@ -30,7 +30,7 @@ import {
 const snap = (p: unknown) => structuredClone((p as MockPreset).snapshot) as AppSnapshot;
 
 function row(date: string, total: number, extra: Partial<DayRow> = {}): DayRow {
-  return { date, total, cost: total / 1e6, claude: total, codex: 0, gemini: 0, cacheRead: total * 0.9, input: total * 0.02, cacheWrite: total * 0.05, messages: 1, sessions: 1, goal: 100, met: total >= 100, streak: 0, ...extra };
+  return { date, total, cost: total / 1e6, claude: total, codex: 0, gemini: 0, cacheRead: total * 0.9, input: total * 0.02, cacheWrite: total * 0.05, messages: 1, sessions: 1, goal: 100, met: total >= 100, streak: 0, frozen: false, ...extra };
 }
 
 describe("buildTrailData", () => {

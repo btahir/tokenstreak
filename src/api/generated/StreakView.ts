@@ -17,4 +17,17 @@ weeklyCurrent: number, weeklyLongest: number,
 /**
  * Weekdays (0 = Monday) that neither break nor extend a streak.
  */
-restDays: Array<number>, };
+restDays: Array<number>, 
+/**
+ * Streak freezes are on (`settings.streakFreezes`).
+ */
+freezesEnabled: boolean, 
+/**
+ * Freezes held now (0..=2). One is earned per 7 goal days in a row and
+ * spent automatically on a missed day that isn't a rest day.
+ */
+freezesHeld: number, freezesEarned: number, freezesUsed: number, 
+/**
+ * Goal days until the next freeze is earned (0 when at the cap).
+ */
+nextFreezeIn: number, };

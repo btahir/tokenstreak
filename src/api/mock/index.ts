@@ -22,7 +22,7 @@ import type {
   ShareOptions,
   Tool,
 } from "../types";
-import { evaluate, setGoal, totalsOf, weekStart } from "./streaks";
+import { FREEZE_CAP, FREEZE_EVERY, evaluate, setGoal, totalsOf, weekStart } from "./streaks";
 
 export { PRESET_IDS, type PresetId } from "./presetIds";
 
@@ -71,11 +71,11 @@ export async function createMockApi(opts: MockOptions): Promise<TokenstreakApi> 
     const history = snap.goals.history.length
       ? snap.goals.history
       : [{ effectiveFrom: snap.days[0]?.date ?? today(), daily: snap.goals.daily, weekly: snap.goals.weekly }];
-    const r = evaluate(totalsOf(snap.days), history, today(), settings.restDays, settings.weekStartsOn);
+    const r = evaluate(totalsOf(snap.days), history, today(), settings.restDays, settings.weekStartsOn, settings.streakFreezes);
     const byDate = new Map(r.days.map((d) => [d.date, d]));
     snap.days = snap.days.map((d) => {
       const e = byDate.get(d.date);
-      return e ? { ...d, goal: e.goal, met: e.met, streak: e.streak } : d;
+      return e ? { ...d, goal: e.goal, met: e.met, streak: e.streak, frozen: e.frozen } : d;
     });
     const g = history[history.length - 1]!;
     const t = snap.today.tokens.total;
@@ -107,6 +107,11 @@ export async function createMockApi(opts: MockOptions): Promise<TokenstreakApi> 
       weeklyCurrent: r.weeklyCurrent,
       weeklyLongest: r.weeklyLongest,
       restDays: settings.restDays,
+      freezesEnabled: settings.streakFreezes,
+      freezesHeld: r.freezesHeld,
+      freezesEarned: r.freezesEarned,
+      freezesUsed: r.freezesUsed,
+      nextFreezeIn: !settings.streakFreezes || r.freezesHeld >= FREEZE_CAP ? 0 : FREEZE_EVERY - r.freezeProgress,
     };
   }
 

@@ -12,4 +12,8 @@ goal: number, met: boolean,
 /**
  * Streak length at the end of this day (0 when not met).
  */
-streak: number, };
+streak: number, 
+/**
+ * A missed day bridged by a streak freeze (the streak survived).
+ */
+frozen: boolean, };

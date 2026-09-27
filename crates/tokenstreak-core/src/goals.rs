@@ -16,6 +16,14 @@
 //!    (goal 0) nothing is met.
 //! 5. Weekly streaks count consecutive weeks meeting the weekly goal in
 //!    effect at the end of that week (or today for the current week).
+//! 6. Streak freezes (setting, on by default): every 7 goal days in a row
+//!    earn a freeze, holding at most 2 (a 7th day at the cap earns nothing).
+//!    A missed day that is not a rest day and not today spends one, if a
+//!    streak is alive and a freeze is held: that day is *frozen*, the streak
+//!    survives but isn't extended, and the count towards the next freeze
+//!    restarts (the 7 goal days must be consecutive; rest days pause the
+//!    count). Without a freeze the miss breaks the streak. Freezes replay
+//!    deterministically over history, like goals.
 
 use std::collections::BTreeMap;
 
@@ -85,6 +93,8 @@ pub struct DayEval {
     pub met: bool,
     /// Streak length after this day (0 when not met).
     pub streak: u32,
+    /// A missed day bridged by a streak freeze.
+    pub frozen: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -98,6 +108,12 @@ pub struct StreakResult {
     pub today_met: bool,
     pub weekly_current: u32,
     pub weekly_longest: u32,
+    /// Streak freezes held after today, earned and spent over the history.
+    pub freezes_held: u32,
+    pub freezes_earned: u32,
+    pub freezes_used: u32,
+    /// Goal days in the current streak since the last freeze was earned.
+    pub freeze_progress: u32,
     /// (week start, tokens, goal, met) for every week in range.
     pub weeks: Vec<(Date, u64, u64, bool)>,
 }
@@ -116,12 +132,30 @@ pub fn week_start(d: Date, ws: WeekStart) -> Date {
 
 /// Evaluates streaks over `[first, today]` where `first` is the earliest day
 /// in `totals` (or today when empty).
+/// Days of goal-meeting (in one streak) that earn a freeze.
+pub const FREEZE_EVERY: u32 = 7;
+/// Most freezes held at once.
+pub const FREEZE_CAP: u32 = 2;
+
+/// Evaluates streaks without freezes (rules 1-5).
 pub fn evaluate(
     totals: &BTreeMap<Date, u64>,
     goals: &GoalHistory,
     today: Date,
     rest_days: &[u8],
     ws: WeekStart,
+) -> StreakResult {
+    evaluate_with(totals, goals, today, rest_days, ws, false)
+}
+
+/// Evaluates streaks, with streak freezes when `freezes` is true (rule 6).
+pub fn evaluate_with(
+    totals: &BTreeMap<Date, u64>,
+    goals: &GoalHistory,
+    today: Date,
+    rest_days: &[u8],
+    ws: WeekStart,
+    freezes: bool,
 ) -> StreakResult {
     let mut r = StreakResult::default();
     let Some(&first) = totals.keys().next() else {
@@ -130,12 +164,14 @@ pub fn evaluate(
     let first = first.min(today);
     let mut run: u32 = 0;
     let mut run_start: Option<Date> = None;
+    let mut since_earn: u32 = 0;
     let mut d = first;
     while d <= today {
         let tokens = totals.get(&d).copied().unwrap_or(0);
         let goal = goals.at(d).map(|g| g.daily).unwrap_or(0);
         let met = goal > 0 && tokens >= goal;
         let rest = rest_days.contains(&weekday_index(d));
+        let mut frozen = false;
         if met {
             if run == 0 {
                 run_start = Some(d);
@@ -146,11 +182,29 @@ pub fn evaluate(
                 r.longest_start = run_start;
                 r.longest_end = Some(d);
             }
+            if freezes {
+                since_earn += 1;
+                if since_earn == FREEZE_EVERY {
+                    since_earn = 0;
+                    if r.freezes_held < FREEZE_CAP {
+                        r.freezes_held += 1;
+                        r.freezes_earned += 1;
+                    }
+                }
+            }
         } else if !(rest || d == today) {
-            run = 0;
-            run_start = None;
+            if freezes && run > 0 && r.freezes_held > 0 {
+                r.freezes_held -= 1;
+                r.freezes_used += 1;
+                frozen = true;
+                since_earn = 0;
+            } else {
+                run = 0;
+                run_start = None;
+                since_earn = 0;
+            }
         }
-        r.days.insert(d, DayEval { goal, met, streak: if met { run } else { 0 } });
+        r.days.insert(d, DayEval { goal, met, streak: if met { run } else { 0 }, frozen });
         if d == today {
             r.today_met = met;
         }
@@ -161,6 +215,7 @@ pub fn evaluate(
     }
     r.current = run;
     r.current_start = if run > 0 { run_start } else { None };
+    r.freeze_progress = since_earn;
 
     // Weekly.
     let mut wk = week_start(first, ws);
@@ -280,6 +335,114 @@ mod tests {
         let t = totals(&[("2026-09-18", 100), ("2026-09-21", 100)]);
         let r = evaluate(&t, &hist(&[("2026-09-01", 50)]), date(2026, 9, 21), &[5, 6], WeekStart::Monday);
         assert_eq!(r.current, 2);
+    }
+
+    fn run(days: &[(&str, u64)], today: (i16, i8, i8), rest: &[u8]) -> StreakResult {
+        let t = totals(days);
+        evaluate_with(&t, &hist(&[("2026-08-01", 50)]), date(today.0, today.1, today.2), rest, WeekStart::Monday, true)
+    }
+
+    /// `n` consecutive met days starting at `from` (a Date).
+    fn met_days(from: Date, n: i64) -> Vec<(String, u64)> {
+        (0..n).map(|i| (from.checked_add(i.days()).unwrap().to_string(), 100)).collect()
+    }
+
+    fn as_refs(v: &[(String, u64)]) -> Vec<(&str, u64)> {
+        v.iter().map(|(d, t)| (d.as_str(), *t)).collect()
+    }
+
+    #[test]
+    fn freeze_earned_after_seven_goal_days() {
+        let v = met_days(date(2026, 9, 1), 6);
+        let r = run(&as_refs(&v), (2026, 9, 6), &[]);
+        assert_eq!((r.freezes_held, r.freezes_earned), (0, 0));
+        let v = met_days(date(2026, 9, 1), 7);
+        let r = run(&as_refs(&v), (2026, 9, 7), &[]);
+        assert_eq!((r.freezes_held, r.freezes_earned, r.current), (1, 1, 7));
+    }
+
+    #[test]
+    fn a_frozen_day_restarts_the_count_to_the_next_freeze() {
+        // Earn on Sep 14 (days 1-14 met gives 2); spend one on Sep 15; the
+        // next freeze needs 7 more consecutive goal days (Sep 16-22).
+        let mut v = met_days(date(2026, 9, 1), 14);
+        v.extend(met_days(date(2026, 9, 16), 6));
+        let r = run(&as_refs(&v), (2026, 9, 21), &[]);
+        assert_eq!((r.freezes_held, r.freezes_used, r.freeze_progress), (1, 1, 6));
+        v.extend(met_days(date(2026, 9, 22), 1));
+        let r = run(&as_refs(&v), (2026, 9, 22), &[]);
+        assert_eq!((r.freezes_held, r.freezes_earned), (2, 3));
+    }
+
+    #[test]
+    fn freezes_cap_at_two() {
+        let v = met_days(date(2026, 8, 1), 30);
+        let r = run(&as_refs(&v), (2026, 8, 30), &[]);
+        assert_eq!((r.freezes_held, r.freezes_earned), (2, 2), "days 7 and 14 earn; 21 and 28 are at the cap");
+    }
+
+    #[test]
+    fn freeze_spent_on_a_miss_keeps_the_streak() {
+        // 7 met days (Sep 1-7), miss Sep 8, met Sep 9-10.
+        let mut v = met_days(date(2026, 9, 1), 7);
+        v.extend(met_days(date(2026, 9, 9), 2));
+        let r = run(&as_refs(&v), (2026, 9, 10), &[]);
+        assert_eq!(r.current, 9, "the frozen day bridges but doesn't count");
+        assert_eq!((r.freezes_held, r.freezes_used), (0, 1));
+        assert!(r.days[&date(2026, 9, 8)].frozen);
+        assert_eq!(r.days[&date(2026, 9, 8)].streak, 0);
+        assert_eq!(r.current_start, Some(date(2026, 9, 1)));
+        // Without freezes the same history breaks.
+        let t = totals(&as_refs(&v));
+        let plain = evaluate(&t, &hist(&[("2026-08-01", 50)]), date(2026, 9, 10), &[], WeekStart::Monday);
+        assert_eq!(plain.current, 2);
+        assert_eq!(plain.freezes_held, 0);
+    }
+
+    #[test]
+    fn rest_day_does_not_consume_a_freeze() {
+        // Sep 7 2026 is a Monday; Sep 12/13 are Sat/Sun rest days.
+        let mut v = met_days(date(2026, 9, 5), 7); // Sat 5 .. Fri 11
+        v.extend(met_days(date(2026, 9, 14), 1));
+        let r = run(&as_refs(&v), (2026, 9, 14), &[5, 6]);
+        assert_eq!((r.freezes_held, r.freezes_used, r.current), (1, 0, 8));
+        assert!(!r.days[&date(2026, 9, 12)].frozen);
+    }
+
+    #[test]
+    fn a_miss_without_a_freeze_breaks() {
+        let mut v = met_days(date(2026, 9, 1), 7);
+        v.extend(met_days(date(2026, 9, 10), 1)); // miss Sep 8 (frozen) and Sep 9 (no freeze left)
+        let r = run(&as_refs(&v), (2026, 9, 10), &[]);
+        assert!(r.days[&date(2026, 9, 8)].frozen);
+        assert!(!r.days[&date(2026, 9, 9)].frozen);
+        assert_eq!(r.current, 1);
+        assert_eq!(r.longest, 7);
+    }
+
+    #[test]
+    fn first_day_and_today_never_spend() {
+        let r = run(&[("2026-09-26", 100)], (2026, 9, 26), &[]);
+        assert_eq!((r.current, r.freezes_held, r.freezes_used), (1, 0, 0));
+        // Today below goal is in progress: no freeze is spent on it.
+        let mut v = met_days(date(2026, 9, 1), 7);
+        v.push(("2026-09-08".into(), 10));
+        let r = run(&as_refs(&v), (2026, 9, 8), &[]);
+        assert_eq!((r.current, r.freezes_held, r.freezes_used), (7, 1, 0));
+        assert!(!r.days[&date(2026, 9, 8)].frozen);
+    }
+
+    #[test]
+    fn goal_changes_never_rewrite_frozen_history() {
+        let mut v = met_days(date(2026, 9, 1), 7);
+        v.extend(met_days(date(2026, 9, 9), 2));
+        let t = totals(&as_refs(&v));
+        // A much harder goal from Sep 10 on leaves Sep 1-9 as they were.
+        let g = hist(&[("2026-08-01", 50), ("2026-09-10", 500)]);
+        let r = evaluate_with(&t, &g, date(2026, 9, 10), &[], WeekStart::Monday, true);
+        assert!(r.days[&date(2026, 9, 8)].frozen);
+        assert_eq!(r.current, 8);
+        assert!(!r.today_met);
     }
 
     #[test]

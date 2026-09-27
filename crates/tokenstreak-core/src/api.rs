@@ -101,6 +101,15 @@ pub struct StreakView {
     pub weekly_longest: u32,
     /// Weekdays (0 = Monday) that neither break nor extend a streak.
     pub rest_days: Vec<u8>,
+    /// Streak freezes are on (`settings.streakFreezes`).
+    pub freezes_enabled: bool,
+    /// Freezes held now (0..=2). One is earned per 7 goal days in a row and
+    /// spent automatically on a missed day that isn't a rest day.
+    pub freezes_held: u32,
+    pub freezes_earned: u32,
+    pub freezes_used: u32,
+    /// Goal days until the next freeze is earned (0 when at the cap).
+    pub next_freeze_in: u32,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
@@ -186,6 +195,8 @@ pub struct DayRow {
     pub met: bool,
     /// Streak length at the end of this day (0 when not met).
     pub streak: u32,
+    /// A missed day bridged by a streak freeze (the streak survived).
+    pub frozen: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
@@ -590,6 +601,9 @@ pub struct Settings {
     pub week_starts_on: WeekStart,
     /// Weekdays (0 = Monday) that don't break streaks.
     pub rest_days: Vec<u8>,
+    /// Streak freezes: earned every 7 goal days in a row (hold 2), spent
+    /// automatically on a missed day. On by default.
+    pub streak_freezes: bool,
     /// IANA zone override; `null` = system zone.
     pub timezone: Option<String>,
     pub tools: ToolsSettings,
@@ -618,6 +632,7 @@ impl Default for Settings {
             weekly_goal: 0,
             week_starts_on: WeekStart::Monday,
             rest_days: Vec::new(),
+            streak_freezes: true,
             timezone: None,
             tools: ToolsSettings::default(),
             notifications: NotificationSettings::default(),

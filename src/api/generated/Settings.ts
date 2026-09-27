@@ -15,6 +15,11 @@ export type Settings = { dailyGoal: number, weeklyGoal: number, weekStartsOn: We
  */
 restDays: Array<number>, 
 /**
+ * Streak freezes: earned every 7 goal days in a row (hold 2), spent
+ * automatically on a missed day. On by default.
+ */
+streakFreezes: boolean, 
+/**
  * IANA zone override; `null` = system zone.
  */
 timezone: string | null, tools: ToolsSettings, notifications: NotificationSettings, launchAtLogin: boolean, menuBar: MenuBarDisplay, theme: Theme, 
