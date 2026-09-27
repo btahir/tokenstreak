@@ -256,6 +256,19 @@ pub const CLAUDE_MODELS: &[&str] = &["claude-sonnet-4-5-20250929", "claude-opus-
 pub const CODEX_MODELS: &[&str] = &["gpt-5-codex", "gpt-5", "gpt-5.1-codex"];
 pub const GEMINI_MODELS: &[&str] = &["gemini-2.5-pro", "gemini-2.5-flash"];
 
+/// Picks an index in `0..n` with weight 1 / (i + 1)^1.2.
+fn zipf(rng: &mut Rng, n: usize) -> usize {
+    let w: Vec<f64> = (0..n).map(|i| 1.0 / ((i + 1) as f64).powf(1.2)).collect();
+    let mut x = rng.f64() * w.iter().sum::<f64>();
+    for (i, wi) in w.iter().enumerate() {
+        if x < *wi {
+            return i;
+        }
+        x -= wi;
+    }
+    n.saturating_sub(1)
+}
+
 /// Generates requests for a scenario (deterministic).
 pub fn requests(s: &Scenario) -> Vec<Req> {
     let mut rng = Rng::new(s.seed);
@@ -274,6 +287,12 @@ pub fn requests(s: &Scenario) -> Vec<Req> {
             continue;
         }
         let mut produced = 0u64;
+        // Sessions never spill past midnight, so each day gets its own target.
+        let day_end_ms = day
+            .at(23, 59, 59, 0)
+            .to_zoned(s.tz.clone())
+            .map(|z| z.timestamp().as_millisecond())
+            .unwrap_or(i64::MAX);
         // Sessions within the day.
         let tool_total: f64 = s.tools.iter().sum();
         let mut guard = 0;
@@ -294,7 +313,8 @@ pub fn requests(s: &Scenario) -> Vec<Req> {
                 Tool::Gemini => GEMINI_MODELS,
             };
             let model = if rng.chance(0.7) { models[0] } else { *rng.pick(models) };
-            let project = *rng.pick(&s.projects);
+            // A few projects get most of the work (Zipf-like), as in real life.
+            let project = s.projects[zipf(&mut rng, s.projects.len())];
             let session = format!("{}{:06}", &rng.hex(8), session_n);
             let last_hour = if off == 0 { (s.now_hour - 1).max(1) } else { 23 };
             let start_hour = rng.range(if off == 0 { 0 } else { 8 }, (last_hour as u64).max(1)) as i64;
@@ -310,18 +330,49 @@ pub fn requests(s: &Scenario) -> Vec<Req> {
                 .to_zoned(s.tz.clone())
                 .map(|z| z.timestamp().as_millisecond())
                 .unwrap_or(0);
-            let turns = rng.range(4, 40);
+            // Most sessions are short; a few are marathons (heavy tail).
+            let turns = if rng.chance(0.12) { rng.range(60, 220) } else { rng.range(4, 40) };
             let mut context = rng.range(8_000, 30_000);
-            for _ in 0..turns {
-                if produced >= target || t >= now_ms {
+            let mut compacted = false;
+            // How often the provider's prompt cache misses, and how much of the
+            // context a hit covers. Claude Code writes the cache explicitly
+            // (5-minute TTL); Codex and Gemini cache implicitly, so new context
+            // arrives as plain (uncached) input and hits are partial.
+            let (miss_p, hit_lo, hit_hi) = match tool {
+                Tool::Claude => (0.04, 1.0, 1.0),
+                Tool::Codex => (0.05, 0.94, 1.0),
+                Tool::Gemini => (0.15, 0.65, 0.95),
+            };
+            for turn in 0..turns {
+                if produced >= target || t >= now_ms || t >= day_end_ms {
                     break;
                 }
-                let input = rng.range(3, 400);
-                let cache_write = rng.range(200, 6_000);
-                let cache_read = context;
+                let fresh = rng.range(3, 400);
+                let new_ctx = rng.range(200, 6_000);
                 let output = rng.range(80, 2_500);
                 let reasoning = if tool == Tool::Claude { 0 } else { output / 3 };
-                context += cache_write + output / 2;
+                // The first turn of a session always sends the whole context cold.
+                let miss = turn == 0 || compacted || rng.chance(miss_p);
+                compacted = false;
+                let (input, cache_write, cache_read) = if tool == Tool::Claude {
+                    if miss {
+                        (fresh, context + new_ctx, 0)
+                    } else {
+                        (fresh, new_ctx, context)
+                    }
+                } else if miss {
+                    (fresh + context + new_ctx, 0, 0)
+                } else {
+                    let f = hit_lo + (hit_hi - hit_lo) * rng.f64();
+                    let hit = ((context as f64) * f) as u64;
+                    (fresh + (context - hit) + new_ctx, 0, hit)
+                };
+                context += new_ctx + output / 2;
+                // Auto-compaction near the context window: the summary starts a cold cache.
+                if context > 170_000 {
+                    context = rng.range(20_000, 40_000);
+                    compacted = true;
+                }
                 let total = input + cache_write + cache_read + output;
                 out.push(Req {
                     ts_ms: t,
@@ -331,7 +382,7 @@ pub fn requests(s: &Scenario) -> Vec<Req> {
                     session: session.clone(),
                     input,
                     output,
-                    cache_write: if tool == Tool::Claude { cache_write } else { 0 },
+                    cache_write,
                     cache_read,
                     reasoning,
                     content_bytes: rng.range(s.content_bytes.0 as u64, s.content_bytes.1 as u64 + 1) as usize,

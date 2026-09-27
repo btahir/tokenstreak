@@ -255,7 +255,7 @@ fn generate(d: &Def, seed: u64, today: Date, tz: &TimeZone, work: &Path) -> std:
     engine.refresh();
     if d.onboarded {
         // Goals set before the history window so the whole history uses them.
-        let _ = engine.complete_onboarding(&GoalsInput { daily: d.goal, weekly: d.goal * 5 });
+        let _ = engine.complete_onboarding(&GoalsInput { daily: d.goal, weekly: crate::goals::friendly_round(d.goal * 6) });
     }
     if d.acknowledge {
         let snap = engine.snapshot();
