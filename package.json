@@ -20,7 +20,9 @@
     "gen:mock": "cargo run --release -p tokenstreak-core --bin tokenstreak-cli -- gen-mock --out src/api/mock/presets --today 2026-09-26 --tz America/Los_Angeles",
     "gen:fixtures": "python3 tests/fixtures/generate.py",
     "sanity": "cargo run --release -p tokenstreak-core --bin tokenstreak-cli -- compare --online",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test:e2e": "playwright test",
+    "perf:web": "node scripts/perf-mock.mjs"
   },
   "packageManager": "pnpm@11.1.1",
   "dependencies": {

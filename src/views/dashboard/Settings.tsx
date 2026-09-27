@@ -7,7 +7,7 @@ import { IconExternal, IconHeart, IconLock, IconPlay, IconRefresh, LogoMark } fr
 import { Card, Chip, Glyph, Seg, Toggle } from "../../components/ui";
 import { REPO_URL, SUPPORT_URL } from "../../config";
 import { baseline, goalPresets } from "../../lib/derive";
-import { formatAgo, formatDayYear, formatInt, formatTokens, friendlyGoal, prettyPath, TOOL_NAMES, TOOLS } from "../../lib/format";
+import { formatAgo, formatDayYear, formatInt, formatTokens, friendlyGoal, parseTokens, prettyPath, TOOL_NAMES, TOOLS } from "../../lib/format";
 import { getVolume, playCue, setVolume } from "../../lib/sound";
 import { updateSettings, useApi, useSettings } from "../../state/store";
 import { defaultPath } from "../popover/FirstRun";
@@ -17,16 +17,6 @@ const MIN = 10_000;
 const MAX = 200_000_000;
 const toSlider = (v: number) => (Math.log10(Math.max(MIN, Math.min(MAX, v))) - Math.log10(MIN)) / (Math.log10(MAX) - Math.log10(MIN));
 const fromSlider = (f: number) => friendlyGoal(Math.pow(10, Math.log10(MIN) + f * (Math.log10(MAX) - Math.log10(MIN))));
-
-/** Parses "500k", "2.5M", "1,000,000". */
-export function parseTokens(s: string): number | null {
-  const m = /^\s*([\d.,]+)\s*([kmb]?)\s*$/i.exec(s);
-  if (!m) return null;
-  const n = Number(m[1]!.replace(/,/g, ""));
-  if (!Number.isFinite(n) || n <= 0) return null;
-  const mul = { "": 1, k: 1e3, m: 1e6, b: 1e9 }[m[2]!.toLowerCase() as "" | "k" | "m" | "b"];
-  return Math.round(n * mul);
-}
 
 export function SettingsPage({ snap }: { snap: AppSnapshot }) {
   const settings = useSettings();

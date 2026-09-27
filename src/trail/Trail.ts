@@ -73,6 +73,15 @@ interface ThemeDef {
   rim: RGB | null;
   rimA: number;
   wisp: number;
+  /** A lighter inner band inside the body (0 = off): gives the light ribbon a silky, lit-tube look. */
+  inner: number;
+  innerTint: RGB;
+  /** Soft drop shadow under the ribbon (light theme: a silk ribbon lifted off paper). */
+  shadow: string | null;
+  /** Core width as a fraction of the body. */
+  coreW: number;
+  /** How far strand colours are mixed toward white. */
+  strandWhite: number;
   shimmer: RGB;
   shimmerA: number;
   spark: RGB;
@@ -95,6 +104,7 @@ export const THEMES: Record<TrailTheme, ThemeDef> = {
     sun: null,
     rim: null, rimA: 0,
     wisp: 0.45,
+    inner: 0, innerTint: [255, 247, 234], strandWhite: 0.45, shadow: null, coreW: 0.24,
     shimmer: [255, 247, 234], shimmerA: 0.55,
     spark: [255, 244, 225],
   },
@@ -103,19 +113,20 @@ export const THEMES: Record<TrailTheme, ThemeDef> = {
   light: {
     sky: [[0, "#ECE4FB"], [0.36, "#F6E2EE"], [0.7, "#FFE0CC"], [0.9, "#FFEBD9"], [1, "#FFF3E6"]],
     hills: ["rgba(242,208,222,0.78)", "rgba(250,226,222,1)"],
-    tool: { claude: [246, 124, 58], codex: [226, 66, 110], gemini: [110, 76, 226], other: [150, 140, 170] },
-    core: [255, 255, 255],
+    tool: { claude: [248, 132, 68], codex: [234, 80, 120], gemini: [120, 88, 232], other: [150, 140, 170] },
+    core: [255, 253, 248],
     coolCore: [240, 248, 255],
     blend: "source-over",
-    glowA: 0.3, bodyA: 1, strandA: 0.85, pastDim: 0.5, wMul: 1.05, bodyMul: 0.95, bodyBlur: 0.45, glowMul: 4.2, coreA: 0.92,
-    glowTint: [255, 196, 150], glowTintAmt: 0.35,
+    glowA: 0.36, bodyA: 1, strandA: 0.5, pastDim: 0.5, wMul: 1.05, bodyMul: 1, bodyBlur: 0.45, glowMul: 4.4, coreA: 0.95,
+    glowTint: [255, 196, 128], glowTintAmt: 0.6,
     star: "rgba(240,150,110,", starA: 0.34, starCount: 14,
     text: "rgba(35,29,51,0.62)", halo: "rgba(35,29,51,0.2)",
     ring: [232, 93, 122], ringA: 0.78,
     horizon: "rgba(255,196,140,",
     sun: "rgba(255,214,170,",
-    rim: [150, 50, 90], rimA: 0.16,
+    rim: [150, 50, 90], rimA: 0.05,
     wisp: 0.55,
+    inner: 0.8, innerTint: [255, 226, 196], strandWhite: 0.3, shadow: "rgba(150,56,96,0.18)", coreW: 0.13,
     shimmer: [255, 250, 236], shimmerA: 0.85,
     spark: [255, 184, 120],
   },
@@ -643,7 +654,9 @@ export class Trail {
       ema[0] = sum / m;
     }
     for (let i = 1; i < n; i++) ema[i] = lerp(ema[i - 1]!, ratio[i]!, al);
-    for (let i = n - 2; i >= 0; i--) ema[i] = lerp(ema[i + 1]!, ema[i]!, 1 - al);
+    // zero-phase: a backward EMA over the forward one, so busy days lift the
+    // path smoothly instead of kinking it day by day
+    for (let i = n - 2; i >= 0; i--) ema[i] = lerp(ema[i + 1]!, ema[i]!, al * 1.4);
     const top = v.top ?? 0.16;
     const bottom = v.bottom ?? 0.84;
     const pts: Pt[] = days.map((q, i) => {
@@ -669,6 +682,13 @@ export class Trail {
         i,
       };
     });
+    // dense layouts: relax y a little more so a year reads as one sweep
+    if (step < 8) {
+      for (let pass = 0; pass < (step < 4 ? 3 : 2); pass++) {
+        const ys = pts.map((p) => p.y);
+        for (let i = 1; i < n - 1; i++) pts[i]!.y = ys[i - 1]! * 0.25 + ys[i]! * 0.5 + ys[i + 1]! * 0.25;
+      }
+    }
     const passes = step < 4 ? 6 : step < 8 ? 3 : 2;
     for (let pass = 0; pass < passes; pass++) {
       const ws = pts.map((p) => p.wd);
@@ -849,6 +869,14 @@ export class Trail {
     g.globalCompositeOperation = T.blend;
     for (const x of spans) this.ribbonLayers(g, x.run.a, x.end, x.dim, x.run.current, "glow", q);
     c.drawImage(gc, 0, 0, this.w, this.h);
+    if (T.shadow && supportsFilter()) {
+      // one blurred, offset silhouette of every run
+      c.save();
+      c.filter = `blur(${(3.5 * k).toFixed(1)}px)`;
+      c.translate(0, 3.2 * k);
+      for (const x of spans) this.ribbonLayers(c, x.run.a, x.end, x.dim, x.run.current, "shadow", this.dpr);
+      c.restore();
+    }
     // light theme: a thin darker rim gives the ribbon an edge on a pale sky
     if (T.rim) for (const x of spans) this.ribbonLayers(c, x.run.a, x.end, x.dim, x.run.current, "rim", this.dpr);
     // bodies: all runs crisp on one layer, then composite once with a light blur
@@ -864,6 +892,7 @@ export class Trail {
     if (supportsFilter() && T.bodyBlur * k * this.dpr >= 1) c.filter = `blur(${(T.bodyBlur * k * this.dpr).toFixed(1)}px)`;
     c.drawImage(bc, 0, 0);
     c.restore();
+    if (T.inner > 0) for (const x of spans) this.ribbonLayers(c, x.run.a, x.end, x.dim, x.run.current, "inner", this.dpr);
     for (const x of spans) {
       this.ribbonLayers(c, x.run.a, x.end, x.dim, x.run.current, "core", this.dpr);
       if (!x.run.current) this.embers(c, S[x.end]!, x.dim);
@@ -871,11 +900,11 @@ export class Trail {
     c.globalCompositeOperation = "source-over";
   }
 
-  private ribbonLayers(c: Ctx, a: number, b: number, dim: number, current: boolean, mode: "glow" | "body" | "core" | "rim", scale: number): void {
+  private ribbonLayers(c: Ctx, a: number, b: number, dim: number, current: boolean, mode: "glow" | "body" | "core" | "rim" | "inner" | "shadow", scale: number): void {
     const T = this.theme;
     const S = this.samples;
     const k = this.k;
-    const grad = (alpha: number, kind: "core" | "glow" | "body" | "rim") => {
+    const grad = (alpha: number, kind: "core" | "glow" | "body" | "rim" | "inner") => {
       const g = c.createLinearGradient(S[a]!.x, 0, S[b]!.x, 0);
       const span = S[b]!.x - S[a]!.x || 1;
       const every = Math.max(1, Math.floor((b - a) / 40));
@@ -885,6 +914,7 @@ export class Trail {
         if (kind === "core") col = mixRGB(T.core, T.coolCore, clamp((s.cache - 0.4) / 0.5, 0, 1));
         else if (kind === "glow" && T.glowTint) col = mixRGB(s.col, T.glowTint, T.glowTintAmt);
         else if (kind === "rim" && T.rim) col = mixRGB(s.col, T.rim, 0.6);
+        else if (kind === "inner") col = mixRGB(s.col, T.innerTint, 0.55);
         else col = s.col;
         g.addColorStop(clamp((s.x - S[a]!.x) / span, 0, 1), rgba(col, alpha * dim));
       }
@@ -933,19 +963,34 @@ export class Trail {
       poly(T.bodyMul, Math.max(0.6, 0.7 * k));
       return;
     }
+    if (mode === "shadow") {
+      c.fillStyle = T.shadow ?? "transparent";
+      c.globalAlpha = dim;
+      poly(T.bodyMul * 0.9);
+      c.globalAlpha = 1;
+      return;
+    }
+    if (mode === "inner") {
+      c.fillStyle = grad(T.inner, "inner");
+      poly(T.bodyMul * 0.5);
+      return;
+    }
     if (mode === "body") {
       c.fillStyle = grad(T.bodyA, "body");
       poly(T.bodyMul);
       return;
     }
     c.fillStyle = grad(T.coreA, "core");
-    poly(0.24);
+    poly(T.coreW);
   }
 
   private embers(c: Ctx, s: Sample, dim: number): void {
     const r = rng(Math.round(s.x * 13));
-    for (let i = 0; i < 6; i++) {
-      c.fillStyle = rgba(this.theme.tool.claude, 0.55 * dim * (1 - i / 7));
+    // dense layouts have many broken runs: fewer, fainter embers so a year stays clean
+    const count = this.step < 4 ? 2 : this.step < 8 ? 4 : 6;
+    const a = this.themeName === "dark" ? 0.55 : 0.4;
+    for (let i = 0; i < count; i++) {
+      c.fillStyle = rgba(this.theme.tool.claude, a * dim * (1 - i / 7));
       c.beginPath();
       c.arc(s.x + (r() - 0.3) * 10 * this.k, s.y + r() * 16 * this.k, (0.6 + r() * 1.2) * this.k, 0, 7);
       c.fill();
@@ -1081,7 +1126,7 @@ export class Trail {
         const g = c.createLinearGradient(S[a]!.x, 0, S[b]!.x, 0);
         const span = S[b]!.x - S[a]!.x || 1;
         const every = Math.max(1, Math.floor((b - a) / 30));
-        const col = dark ? mixRGB(T.tool[tk], [255, 250, 240], 0.45) : mixRGB(T.tool[tk], [255, 255, 255], 0.6);
+        const col = mixRGB(T.tool[tk], dark ? [255, 250, 240] : [255, 255, 255], T.strandWhite);
         for (let j = a; j <= b; j += every)
           g.addColorStop(clamp((S[j]!.x - S[a]!.x) / span, 0, 1), rgba(col, T.strandA * dim * clamp(S[j]!.sh[ti]! * 1.6 + 0.08, 0, 1)));
         c.strokeStyle = g;
@@ -1145,7 +1190,8 @@ export class Trail {
     draw(T.glowMul * 0.9, T.glowA * 0.3 * a0, glowCol);
     if (T.rim) draw(T.bodyMul, T.rimA * a0, mixRGB(col, T.rim, 0.6), Math.max(0.6, 0.7 * k));
     draw(T.bodyMul, T.bodyA * 0.85 * a0, col);
-    draw(0.3, (this.themeName === "dark" ? 0.8 : 0.7) * a0, T.core);
+    if (T.inner > 0) draw(T.bodyMul * 0.5, T.inner * a0, mixRGB(col, T.innerTint, 0.55));
+    draw(T.coreW * 1.25, (this.themeName === "dark" ? 0.8 : 0.85) * a0, T.core);
   }
 
   private shimmer(c: Ctx, t: number, ce: number): void {
@@ -1319,9 +1365,10 @@ export class Trail {
     for (let b = 0; b < 3; b++) {
       const top = h * (0.08 + b * 0.05);
       const bot = h * (0.42 + b * 0.04);
-      const g = c.createLinearGradient(0, top, 0, bot);
+      // the gradient fades out inside the wavy polygon, so no edge ever shows
+      const g = c.createLinearGradient(0, top + h * 0.05, 0, bot - h * 0.06);
       g.addColorStop(0, rgba(cols[b]!, 0));
-      g.addColorStop(0.6, rgba(cols[b]!, dark ? 0.13 : 0.2));
+      g.addColorStop(0.55, rgba(cols[b]!, dark ? 0.14 : 0.2));
       g.addColorStop(1, rgba(cols[b]!, 0));
       c.fillStyle = g;
       c.beginPath();

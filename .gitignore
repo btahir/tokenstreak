@@ -22,3 +22,7 @@ real-logs/
 .DS_Store
 *.log
 dist-web/
+
+# Playwright
+test-results/
+playwright-report/

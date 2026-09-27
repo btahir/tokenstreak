@@ -189,7 +189,7 @@ const TOOL_COL: Record<Tool, string> = { claude: "#F7995A", codex: "#EC5F80", ge
 
 function trailLayout(o: CardOptions, maxDays: number): Partial<TrailLayout> {
   return o.format === "story"
-    ? { baseY: 0.6, amp: 0.1, rise: 0.16, headX: 0.84, headR: 22, maxDays, top: 0.4, bottom: 0.8 }
+    ? { baseY: 0.58, amp: 0.12, rise: 0.22, headX: 0.84, headR: 22, maxDays, top: 0.36, bottom: 0.72 }
     : { baseY: 0.66, amp: 0.08, rise: 0.12, headX: 0.86, maxDays, top: 0.46, bottom: 0.82 };
 }
 

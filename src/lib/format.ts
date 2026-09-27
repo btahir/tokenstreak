@@ -157,3 +157,13 @@ export function friendlyGoal(n: number): number {
   const step = m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10;
   return Math.max(10_000, step * p);
 }
+
+/** Parses "500k", "2.5M", "1,000,000". */
+export function parseTokens(s: string): number | null {
+  const m = /^\s*([\d.,]+)\s*([kmb]?)\s*$/i.exec(s);
+  if (!m) return null;
+  const n = Number(m[1]!.replace(/,/g, ""));
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const mul = { "": 1, k: 1e3, m: 1e6, b: 1e9 }[m[2]!.toLowerCase() as "" | "k" | "m" | "b"];
+  return Math.round(n * mul);
+}
