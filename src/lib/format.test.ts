@@ -31,6 +31,15 @@ beforeAll(() => {
 });
 
 describe("formatTokens", () => {
+  it("rolls a rounded carry over into the next unit (never '1000K')", () => {
+    expect(formatTokens(999_600)).toBe("1M");
+    expect(formatTokens(999_499)).toBe("999K");
+    expect(formatTokens(999_960_000)).toBe("1B");
+    expect(formatTokens(999.6)).toBe("1K");
+    expect(formatTokens(-999_600)).toBe("−1M");
+    // below a goal it never rounds up to the goal
+    expect(formatTowardGoal(999_600, 1_000_000)).toBe("999.6K");
+  });
   it("uses compact units with one decimal below 100", () => {
     expect(formatTokens(0)).toBe("0");
     expect(formatTokens(999)).toBe("999");

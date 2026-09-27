@@ -321,6 +321,8 @@ input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px 
 .onb__big small { font: 400 34px var(--font-display); opacity: .75; letter-spacing: -.01em; margin-left: 10px; }
 .facts-row { display: flex; gap: 10px; margin-top: auto; flex-wrap: wrap; }
 .ofact { padding: 11px 15px; border-radius: 16px; background: var(--pill); border: 1px solid var(--pill-line); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); animation: enter var(--dur-slow) var(--ease-out) both; }
+:root[data-theme="dark"] .ofact { background: rgba(26,20,51,.58); border-color: rgba(255,255,255,.14); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ofact { background: rgba(26,20,51,.58); border-color: rgba(255,255,255,.14); } }
 .ofact span { display: block; font: 500 11.5px var(--font-ui); opacity: .75; }
 .ofact b { font: 400 27px/1.1 var(--font-display); letter-spacing: -.01em; }
 .onb__cta { display: flex; justify-content: space-between; align-items: center; margin-top: 20px; font-size: 13px; }

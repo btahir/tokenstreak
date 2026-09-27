@@ -133,13 +133,24 @@ export function buildCardModel(snap: AppSnapshot, o: CardOptions, share: ShareCa
           lw && leaner >= 0.01 ? ["Per token vs usual", `−${Math.round(leaner * 100)}%`] : ["Active days", `${wk.activeDays} of 7`],
           ["Busiest day", wk.busiest ? formatTokens(wk.busiest.total) : "—"],
         ];
+    // a "personal best" needs something to beat: about four weeks of history
+    const firstActive = days.find((d) => d.total > 0)?.date ?? today;
+    const enoughHistory = daysBetween(firstActive, today) >= 27;
+    const pct = percentValue(wk.cacheShare);
+    const [headline, subline] = !enoughHistory
+      ? ["My week", `in light · ${pct}% from cache`]
+      : money
+        ? [formatUsd(lw.perM), "per million tokens, my leanest week yet"]
+        : lw && leaner >= 0.01
+          ? [`${Math.round(leaner * 100)}% leaner`, "per token than usual, my leanest week yet"]
+          : [`${pct}%`, "from cache, my leanest week yet"];
     m = {
-      headline: money ? formatUsd(lw.perM) : lw && leaner >= 0.01 ? `${Math.round(leaner * 100)}% leaner` : `${percentValue(wk.cacheShare)}% cache`,
-      subline: money ? "per million tokens, my leanest week yet" : lw && leaner >= 0.01 ? "per token than usual, my leanest week yet" : "from cache, my leanest week yet",
+      headline,
+      subline,
       rangeLabel: formatDayRange(from, to),
       stats,
       mix: mixOf(days.filter((d) => d.date >= from && d.date <= to)),
-      chip: "Personal best · leanest week",
+      chip: enoughHistory ? "Personal best · leanest week" : null,
       projects: null,
       ...span(from, to),
     };

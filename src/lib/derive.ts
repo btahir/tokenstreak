@@ -321,7 +321,8 @@ export function progressCopy(t: TodayView): { lead: string; rest: string; pct: s
     return over >= t.goal * 0.01 ? { lead: `+${fmt(over)}`, rest: "past your goal · nicely done", pct } : { lead: "Goal lit", rest: "right on the mark · nicely done", pct };
   }
   if (t.tokens.total === 0) return { lead: fmt(t.goal), rest: "to light today’s trail", pct };
-  return { lead: fmt(t.remaining), rest: "to light today’s trail", pct };
+  // the last few hundred tokens read as "Under 1K", never "2 to light"
+  return { lead: t.remaining < 1000 ? "Under 1K" : fmt(t.remaining), rest: "to light today’s trail", pct };
 }
 
 // local import-free copy of formatTokens to keep this module light for tests

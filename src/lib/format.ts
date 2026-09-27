@@ -23,14 +23,26 @@ export function formatTokens(n: number, opts: { digits?: number; floor?: boolean
   const abs = Math.abs(n);
   const sign = n < 0 ? "−" : "";
   let [v, u] = unitOf(abs);
-  // rounding can carry into the next unit (999.96K -> 1000K): step up instead
-  if (!opts.floor && u && u !== "T" && Math.round(v) >= 1000) [v, u] = unitOf(abs * 1.0001);
-  if (u === "") return `${sign}${opts.floor ? Math.floor(abs) : Math.round(abs)}`;
-  const d = opts.digits ?? (u === "K" && v >= 10 ? 0 : 1);
-  const places = v >= 100 && opts.digits === undefined ? 0 : d;
-  const k = Math.pow(10, places);
-  const r = opts.floor ? Math.floor(v * k + 1e-9) / k : Math.round(v * k) / k;
-  return `${sign}${opts.fixed ? r.toFixed(places) : trim(r.toFixed(places))}${u}`;
+  if (u === "") {
+    const whole = opts.floor ? Math.floor(abs) : Math.round(abs);
+    // 999.6 rounds to 1000: that is "1K", not "1000"
+    if (whole < 1000) return `${sign}${whole}`;
+    [v, u] = [abs / 1000, "K"];
+  }
+  const NEXT: Record<string, string> = { K: "M", M: "B", B: "T" };
+  for (;;) {
+    const d = opts.digits ?? (u === "K" && v >= 10 ? 0 : 1);
+    const places = v >= 100 && opts.digits === undefined ? 0 : d;
+    const k = Math.pow(10, places);
+    const r = opts.floor ? Math.floor(v * k + 1e-9) / k : Math.round(v * k) / k;
+    // rounding can carry into the next unit (999,600 -> "1000K"): step up to "1M" instead
+    if (r >= 1000 && NEXT[u]) {
+      v /= 1000;
+      u = NEXT[u]!;
+      continue;
+    }
+    return `${sign}${opts.fixed ? r.toFixed(places) : trim(r.toFixed(places))}${u}`;
+  }
 }
 
 /**

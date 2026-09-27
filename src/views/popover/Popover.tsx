@@ -242,8 +242,9 @@ function PopoverMain({ snap }: { snap: AppSnapshot }) {
           </Tile>
         </div>
 
-        <Week snap={snap} />
-        <Agents snap={snap} />
+        {/* while the count-up runs toward a newly lit goal, the week and agents follow the number */}
+        <Week snap={snap} holdToday={t.met && !shownMet ? shown.progress : null} scale={t.tokens.total > 0 ? heroValue / t.tokens.total : 1} />
+        <Agents snap={snap} scale={t.tokens.total > 0 ? heroValue / t.tokens.total : 1} />
       </div>
 
       <footer className="pfoot">
@@ -263,9 +264,11 @@ function PopoverMain({ snap }: { snap: AppSnapshot }) {
   );
 }
 
-function Week({ snap }: { snap: AppSnapshot }) {
-  const orbs = weekOrbs(snap);
+function Week({ snap, holdToday, scale }: { snap: AppSnapshot; holdToday: number | null; scale: number }) {
+  // until ignition today's orb stays a progress ring (it lights with the shockwave)
+  const orbs = weekOrbs(snap).map((o) => (holdToday !== null && o.date === snap.today.date ? { ...o, state: "today" as const, progress: holdToday } : o));
   const w = snap.goals.thisWeek;
+  const weekTokens = w.tokens - snap.today.tokens.total * (1 - scale);
   return (
     <div className="week" data-testid="week">
       <div className="week__orbs">
@@ -277,22 +280,23 @@ function Week({ snap }: { snap: AppSnapshot }) {
         ))}
       </div>
       <div className="week__sum">
-        <b>{formatTowardGoal(w.tokens, w.goal)}</b>
+        <b>{formatTowardGoal(weekTokens, w.goal)}</b>
         {w.goal > 0 ? `of ${formatTokens(w.goal)} this week` : "this week"}
       </div>
     </div>
   );
 }
 
-function Agents({ snap }: { snap: AppSnapshot }) {
+function Agents({ snap, scale }: { snap: AppSnapshot; scale: number }) {
   const t = snap.today;
-  const by = TOOLS.map((tool) => t.byTool.find((b) => b.tool === tool) ?? { tool, tokens: 0, share: 0, cost: 0 });
+  // totals count up with the hero number
+  const by = TOOLS.map((tool) => t.byTool.find((b) => b.tool === tool) ?? { tool, tokens: 0, share: 0, cost: 0 }).map((b) => ({ ...b, tokens: b.tokens * scale }));
   const used = by.filter((b) => b.tokens > 0);
   return (
     <div className="agents" data-testid="agents">
       <div className="agents__head">
         <span>By agent today</span>
-        <span className="ts-tabular">{formatTokens(t.tokens.total)}</span>
+        <span className="ts-tabular">{formatTowardGoal(t.tokens.total * scale, t.goal)}</span>
       </div>
       {used.length ? (
         <>
