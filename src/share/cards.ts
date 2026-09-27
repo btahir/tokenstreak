@@ -50,8 +50,15 @@ function mixOf(rows: DayRow[]): { tool: Tool; share: number }[] {
   return TOOLS.map((tool) => ({ tool, share: sum(rows, (d) => d[tool]) / tot })).filter((m) => m.share >= 0.005);
 }
 
-/** The cheapest 7-day window (cost per 1M) with at least 3 active days. */
+/**
+ * The cheapest 7-day window (cost per 1M): a full week (5+ active days) when
+ * there is one, else any week with 3+ active days.
+ */
 export function leanestWeek(days: DayRow[], today: string, lookback = 180): { from: string; to: string; perM: number; tokens: number; cache: number; vsUsual: number } | null {
+  return leanestWeekWith(days, today, lookback, 5) ?? leanestWeekWith(days, today, lookback, 3);
+}
+
+function leanestWeekWith(days: DayRow[], today: string, lookback: number, minActive: number): { from: string; to: string; perM: number; tokens: number; cache: number; vsUsual: number } | null {
   const rows = days.filter((d) => d.date > addDays(today, -lookback) && d.date <= today);
   let best: { from: string; to: string; perM: number; tokens: number; cache: number } | null = null;
   for (let i = 0; i + 7 <= rows.length; i++) {
@@ -59,7 +66,7 @@ export function leanestWeek(days: DayRow[], today: string, lookback = 180): { fr
     const tokens = sum(w, (d) => d.total);
     const active = w.filter((d) => d.total > 0).length;
     const cost = sum(w, (d) => d.cost);
-    if (active < 3 || tokens <= 0 || cost <= 0) continue;
+    if (active < minActive || tokens <= 0 || cost <= 0) continue;
     const perM = cost / (tokens / 1e6);
     if (!best || perM < best.perM) best = { from: w[0]!.date, to: w[6]!.date, perM, tokens, cache: spanSummary(w, w[0]!.date, w[6]!.date).cacheShare };
   }

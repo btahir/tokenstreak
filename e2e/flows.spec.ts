@@ -169,11 +169,17 @@ test("the 900 x 620 minimum window has no horizontal overflow", async ({ page })
   for (const pg of ["overview", "stats", "achievements", "settings"]) {
     await page.goto(url({ view: "dashboard", preset: "heavy-multi-tool", theme: "dark", page: pg }));
     await expect(page.getByTestId(`page-${pg}`)).toBeVisible();
-    const over = await page.evaluate(() => {
-      const main = document.querySelector(".main")!;
-      const right = main.getBoundingClientRect().right;
-      return [...document.querySelectorAll(".card, .tile, .hero")].filter((el) => el.getBoundingClientRect().right > right + 1 || el.scrollWidth > el.clientWidth + 1).length;
-    });
-    expect(over, pg).toBe(0);
+    // poll: the heatmap sizes itself from a ResizeObserver after first paint
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => {
+            const main = document.querySelector(".main")!;
+            const right = main.getBoundingClientRect().right;
+            return [...document.querySelectorAll(".card, .tile, .hero")].filter((el) => el.getBoundingClientRect().right > right + 1 || el.scrollWidth > el.clientWidth + 1).length;
+          }),
+        { message: pg },
+      )
+      .toBe(0);
   }
 });

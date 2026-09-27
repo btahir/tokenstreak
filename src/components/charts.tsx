@@ -3,7 +3,7 @@
 // dashed goal line with a label chip, no borders, at most 3 grid lines,
 // tabular numbers, and a dot above goal days.
 
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Tool } from "../api/types";
 import { niceTicks, type BarRow, type HeatCell } from "../lib/derive";
 import { formatDate, formatTokens, formatUsd, monthShort, TOOL_SHORT, TOOLS, weekdayShort } from "../lib/format";
@@ -14,7 +14,8 @@ const COL: Record<Tool, string> = { claude: "var(--tool-claude)", codex: "var(--
 function useWidth<T extends HTMLElement>(fallback: number): [React.RefObject<T | null>, number] {
   const ref = useRef<T>(null);
   const [w, setW] = useState(0);
-  useEffect(() => {
+  // measure before paint so the first frame is already the right size
+  useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     const ro = new ResizeObserver(() => setW(el.clientWidth));
