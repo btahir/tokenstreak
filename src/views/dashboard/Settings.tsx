@@ -36,24 +36,14 @@ export function SettingsPage({ snap }: { snap: AppSnapshot }) {
           <Card title="Sound">
             <SoundRows settings={settings} set={set} />
           </Card>
-          <Card title="Share privacy" sub="What share cards may show. Cards are rendered on this Mac; nothing is uploaded.">
-            <Row title="Show project names on cards" desc="Off: cards show agents and totals only.">
-              <Toggle label="Show project names on cards" on={settings.share.showProjectNames} onChange={(v) => set({ share: { showProjectNames: v } })} />
-            </Row>
-            <Row title="Show estimated cost on cards" desc="Off by default. Costs are estimates, not bills.">
-              <Toggle label="Show estimated cost on cards" on={settings.share.showCost} onChange={(v) => set({ share: { showCost: v } })} />
-            </Row>
-            <Row title="Show agent mix on cards" desc="The Claude · Codex · Gemini split along the bottom.">
-              <Toggle label="Show agent mix on cards" on={settings.share.showAgentMix ?? true} onChange={(v) => set({ share: { showAgentMix: v } })} />
-            </Row>
-          </Card>
+          <SharePrivacy settings={settings} set={set} />
         </div>
         <div className="set__col">
           <Card title="General">
             <Row title="Launch at login" desc="Start quietly in the menu bar when you log in.">
               <Toggle label="Launch at login" on={settings.launchAtLogin} onChange={(v) => set({ launchAtLogin: v })} />
             </Row>
-            <Row title="Menu bar shows" desc="The icon’s head fills as you approach today’s goal.">
+            <Row title="Menu bar shows" desc="The icon’s head fills as you approach today’s goal." stack>
               <Seg<MenuBarDisplay>
                 label="Menu bar shows"
                 value={settings.menuBar}
@@ -91,7 +81,8 @@ export function SettingsPage({ snap }: { snap: AppSnapshot }) {
                 ]}
               />
             </Row>
-            <h3 className="card__title set__sub">Notifications</h3>
+          </Card>
+          <Card title="Notifications">
             <Row title="Goal lit" desc="A single, quiet notification when you pass today’s goal.">
               <Toggle label="Goal lit notification" on={settings.notifications.goalReached} onChange={(v) => set({ notifications: { goalReached: v } })} />
             </Row>
@@ -110,18 +101,35 @@ export function SettingsPage({ snap }: { snap: AppSnapshot }) {
               </Row>
             )}
           </Card>
-          <DataCard snap={snap} settings={settings} info={info} set={set} />
         </div>
       </div>
+      <DataCard snap={snap} settings={settings} info={info} set={set} />
       <PrivacyCard />
       <AboutCard info={info} />
     </div>
   );
 }
 
-function Row({ title, desc, children, block }: { title: React.ReactNode; desc?: React.ReactNode; children?: React.ReactNode; block?: boolean }) {
+function SharePrivacy({ settings, set }: { settings: Settings; set: (p: Parameters<typeof updateSettings>[0]) => void }) {
   return (
-    <div className={`srow${block ? " srow--block" : ""}`}>
+    <Card title="Share privacy" sub="What share cards may show. Cards are rendered on this Mac; nothing is uploaded.">
+            <Row title="Show project names on cards" desc="Off: cards show agents and totals only.">
+              <Toggle label="Show project names on cards" on={settings.share.showProjectNames} onChange={(v) => set({ share: { showProjectNames: v } })} />
+            </Row>
+            <Row title="Show estimated cost on cards" desc="Off by default. Costs are estimates, not bills.">
+              <Toggle label="Show estimated cost on cards" on={settings.share.showCost} onChange={(v) => set({ share: { showCost: v } })} />
+            </Row>
+            <Row title="Show agent mix on cards" desc="The Claude · Codex · Gemini split along the bottom.">
+              <Toggle label="Show agent mix on cards" on={settings.share.showAgentMix ?? true} onChange={(v) => set({ share: { showAgentMix: v } })} />
+            </Row>
+    </Card>
+  );
+}
+
+/** A settings row. `stack` puts a wide control under its label instead of squeezing the description. */
+function Row({ title, desc, children, block, stack }: { title: React.ReactNode; desc?: React.ReactNode; children?: React.ReactNode; block?: boolean; stack?: boolean }) {
+  return (
+    <div className={`srow${block ? " srow--block" : ""}${stack ? " srow--stack" : ""}`}>
       <div className="srow__text">
         <div className="srow__t">{title}</div>
         {desc && <div className="srow__d">{desc}</div>}
@@ -218,14 +226,15 @@ function GoalsCard({ snap, settings }: { snap: AppSnapshot; settings: Settings }
           )}
         </div>
       </div>
-      <Row title="Weekly goal" desc="A softer target that forgives a quiet day.">
-        <div className="presets presets--right">
-          {[daily * 5, daily * 7].map((v) => (
-            <Chip key={v} onClick={() => setW(v)} active={weekly === v}>
-              {formatTokens(v)}
+      <Row title="Weekly goal" desc="A softer target that forgives a quiet day or two." stack>
+        <div className="presets">
+          {[5, 6, 7].map((n) => (
+            <Chip key={n} onClick={() => setW(daily * n)} active={weekly === daily * n} title={`${n} good days`}>
+              {formatTokens(daily * n)}
+              <em className="dim">{n} days</em>
             </Chip>
           ))}
-          {![daily * 5, daily * 7].includes(weekly) && custom !== "weekly" && (
+          {![5, 6, 7].map((n) => daily * n).includes(weekly) && custom !== "weekly" && (
             <Chip active solid>
               {formatTokens(weekly)}
             </Chip>
@@ -237,7 +246,7 @@ function GoalsCard({ snap, settings }: { snap: AppSnapshot; settings: Settings }
           )}
         </div>
       </Row>
-      <Row title="Rest days don’t break the streak" desc="Pick days that are always off. They’re skipped, not counted against you.">
+      <Row title="Rest days don’t break the streak" desc="Pick days that are always off. They’re skipped, not counted against you." stack>
         <Seg
           label="Rest days"
           size="sm"
@@ -500,31 +509,31 @@ function AboutCard({ info }: { info: AppInfo | null }) {
   const open = (u: string) => api && void api.openExternal(u);
   return (
     <section className="card about" data-testid="about">
-      <div className="about__brand">
-        <LogoMark size={44} />
-        <div>
-          <div className="about__name">Tokenstreak</div>
-          <div className="ts-label">
-            Version {info?.version ?? "…"} · free and open source (MIT)
+      <div className="about__top">
+        <div className="about__brand">
+          <LogoMark size={44} />
+          <div>
+            <div className="about__name">Tokenstreak</div>
+            <div className="ts-label">
+              Version {info?.version ?? "…"} · free and open source (MIT)
+            </div>
           </div>
         </div>
+        <div className="about__links">
+          <button type="button" className="btn" onClick={() => open(REPO_URL)}>
+            GitHub <IconExternal />
+          </button>
+          <button type="button" className="btn btn--ghost" onClick={() => api && void api.revealLogs()} title="Shows the app log (counts and timings only) in Finder">
+            Report a problem
+          </button>
+          <button type="button" className="btn btn--support" onClick={() => open(SUPPORT_URL)}>
+            <IconHeart /> Support this project
+          </button>
+        </div>
       </div>
-      <div className="about__credits">
-        <p>
-          Log parsing and cost rules are ported from <b>ccusage</b> (MIT), so daily totals match it exactly. <b>Tokscale</b> (MIT) inspired the design. Model prices come from <b>LiteLLM</b>’s open price list (MIT). Type is Instrument Serif and Geist (SIL Open Font License).
-        </p>
-      </div>
-      <div className="about__links">
-        <button type="button" className="btn" onClick={() => open(REPO_URL)}>
-          GitHub <IconExternal />
-        </button>
-        <button type="button" className="btn btn--ghost" onClick={() => api && void api.revealLogs()} title="Shows the app log (counts and timings only) in Finder">
-          Report a problem
-        </button>
-        <button type="button" className="btn btn--support" onClick={() => open(SUPPORT_URL)}>
-          <IconHeart /> Support this project
-        </button>
-      </div>
+      <p className="about__credits">
+        Log parsing and cost rules are ported from <b>ccusage</b> (MIT), so daily totals match it exactly. <b>Tokscale</b> (MIT) inspired the design. Model prices come from <b>LiteLLM</b>’s open price list (MIT). Type is Instrument Serif and Geist (SIL Open Font License).
+      </p>
     </section>
   );
 }
