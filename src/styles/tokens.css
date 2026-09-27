@@ -50,7 +50,9 @@
   --ember:        #FFC46B;   /* success / goal lit */
   --spark:        #FFF3E0;   /* comet core */
   --moon:         #A9D8F5;   /* efficiency accent (cool = lean) */
-  --gradient-dusk: linear-gradient(100deg, #8B6CF0 0%, #F0728C 52%, #FFB27A 100%);
+  --gradient-dusk: linear-gradient(100deg, #8B6CF0 0%, #F0728C 52%, #FFB27A 100%);   /* decorative fills only */
+  /* Buttons with white text: a deeper dusk so every stop keeps >= 4.5:1 with white. */
+  --gradient-action: linear-gradient(100deg, #6F52DC 0%, #C23F6C 55%, #C0502F 100%);
   --gradient-sky-dark: linear-gradient(180deg, #1A1433 0%, #3A2356 38%, #8A3F6E 68%, #E07A6A 90%, #F6A96F 100%);
   --gradient-sky-light: linear-gradient(180deg, #EEE8FB 0%, #F9E5EC 48%, #FFE3CF 82%, #FFF1E2 100%);
 
@@ -69,15 +71,22 @@
   --surface-hover: #FFF3E8;
   --ink: #231D33;            /* primary text */
   --ink-2: #5A5068;          /* secondary text */
-  --ink-3: #8C8196;          /* tertiary / labels */
+  --ink-3: #6E6380;          /* tertiary / labels: 5.3:1 on --bg, 5.0:1 on --bg-sunken */
   --line: rgba(35,29,51,0.08);
   --line-strong: rgba(35,29,51,0.14);
-  --accent: #E85D7A;         /* interactive accent (rose, AA on --bg for text >= 14px bold) */
+  --accent: #B8385A;         /* interactive accent and accent text (rose): 5.3:1 on --bg, 5.0:1 on --bg-sunken */
+  --accent-soft: rgba(232,93,122,.12);
   --accent-ink: #FFFFFF;
+  --on: #7B5CE8;             /* "on" state for toggles (violet: positive, never red) */
+  --ok: #6B4FD8;             /* found / done marks (violet, not green) */
+  --ok-soft: rgba(139,108,240,.14);
+  --live: #F2A33A;           /* live dot (ember) */
   --focus: rgba(139,108,240,0.45);
   --success: #E8A33A; --success-soft: #FFF0D6;
   --warn: #E07A3A; --danger: #D9486A;
-  --heat-0: #F5E9DF; --heat-1: #FFDCC0; --heat-2: #FFB48C; --heat-3: #F4817F; --heat-4: #C9507A;  /* heatmap ramp: cream -> apricot -> coral -> rose */
+  /* heatmap ramp, same hue order in both themes: empty -> violet -> orchid (under goal) -> coral -> ember (lit, blazing) */
+  --heat-0: #EADCCF; --heat-1: #DCCBF5; --heat-2: #E3A0C6; --heat-3: #FF9466; --heat-4: #E8742A;
+  --heat-dot: rgba(255,255,255,.95);
   --chart-grid: rgba(35,29,51,0.07);
   --scrim: rgba(35,29,51,0.28);
   --grain-opacity: 0.035;
@@ -112,14 +121,17 @@
   --surface-hover: #2A2342;
   --ink: #FFF4EA;
   --ink-2: #CFC3D9;
-  --ink-3: #9A8EAD;
+  --ink-3: #A396B6;
   --line: rgba(255,244,234,0.08);
   --line-strong: rgba(255,244,234,0.15);
   --accent: #FF8FA5;
+  --accent-soft: rgba(255,143,165,.14);
   --accent-ink: #231D33;
+  --on: #9B82F5; --ok: #B7A6FF; --ok-soft: rgba(170,148,255,.18); --live: #FFC46B;
   --focus: rgba(170,148,255,0.55);
   --success: #FFC46B; --success-soft: rgba(255,196,107,0.14);
-  --heat-0: #241E3B; --heat-1: #4A2C58; --heat-2: #8C3E68; --heat-3: #E0707A; --heat-4: #FFB27A;
+  --heat-0: #3A3257; --heat-1: #553F85; --heat-2: #9A4C86; --heat-3: #F0876E; --heat-4: #FFC46B;
+  --heat-dot: rgba(35,29,51,.85);
   --chart-grid: rgba(255,244,234,0.07);
   --scrim: rgba(8,6,16,0.55);
   --grain-opacity: 0.05;
@@ -131,10 +143,12 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #17132A; --bg-sunken: #120F21; --surface: #221C38; --surface-glass: rgba(255,255,255,0.06); --surface-hover: #2A2342;
-    --ink: #FFF4EA; --ink-2: #CFC3D9; --ink-3: #9A8EAD; --line: rgba(255,244,234,0.08); --line-strong: rgba(255,244,234,0.15);
-    --accent: #FF8FA5; --accent-ink: #231D33; --focus: rgba(170,148,255,0.55);
+    --ink: #FFF4EA; --ink-2: #CFC3D9; --ink-3: #A396B6; --line: rgba(255,244,234,0.08); --line-strong: rgba(255,244,234,0.15);
+    --accent: #FF8FA5; --accent-soft: rgba(255,143,165,.14); --accent-ink: #231D33; --focus: rgba(170,148,255,0.55);
+    --on: #9B82F5; --ok: #B7A6FF; --ok-soft: rgba(170,148,255,.18); --live: #FFC46B;
     --success: #FFC46B; --success-soft: rgba(255,196,107,0.14);
-    --heat-0: #241E3B; --heat-1: #4A2C58; --heat-2: #8C3E68; --heat-3: #E0707A; --heat-4: #FFB27A;
+    --heat-0: #3A3257; --heat-1: #553F85; --heat-2: #9A4C86; --heat-3: #F0876E; --heat-4: #FFC46B;
+    --heat-dot: rgba(35,29,51,.85);
     --chart-grid: rgba(255,244,234,0.07); --scrim: rgba(8,6,16,0.55); --grain-opacity: 0.05;
     --shadow-1: 0 1px 2px rgba(0,0,0,0.3), 0 0 0 0.5px rgba(255,255,255,0.06);
     --shadow-2: 0 8px 20px -8px rgba(0,0,0,0.5), 0 0 0 0.5px rgba(255,255,255,0.07);

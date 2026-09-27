@@ -33,7 +33,7 @@ export function Onboarding({ snap, onDone }: { snap: AppSnapshot; onDone: () => 
           </div>
         )}
       </div>
-      <div className="onb__steps" aria-label={`Step ${step} of 3`}>
+      <div className="onb__steps" role="progressbar" aria-valuemin={1} aria-valuemax={3} aria-valuenow={step} aria-label={`Setup, step ${step} of 3`}>
         {[1, 2, 3].map((i) => (
           <i key={i} className={i <= step ? "on" : ""} />
         ))}
