@@ -349,29 +349,144 @@ fn send_notices(app: &AppHandle, engine: &Arc<Mutex<Engine>>, snap: &AppSnapshot
     quiet
 }
 
-pub fn human(n: u64) -> String {
-    let f = n as f64;
-    if f >= 1e9 {
-        format!("{:.1}B", f / 1e9)
-    } else if f >= 1e6 {
-        format!("{:.1}M", f / 1e6)
-    } else if f >= 1e3 {
-        format!("{:.0}K", f / 1e3)
+/// Scales a count to its compact unit.
+fn unit_of(abs: f64) -> (f64, &'static str) {
+    if abs >= 1e12 {
+        (abs / 1e12, "T")
+    } else if abs >= 1e9 {
+        (abs / 1e9, "B")
+    } else if abs >= 1e6 {
+        (abs / 1e6, "M")
+    } else if abs >= 1e3 {
+        (abs / 1e3, "K")
     } else {
-        n.to_string()
+        (abs, "")
     }
+}
+
+/// Compact token count, the same as the frontend's `formatTokens`: one
+/// decimal below 100 of a unit, none above (and none for 10K+), trailing
+/// ".0" dropped. `floor` rounds toward zero instead of to nearest.
+fn format_tokens(n: u64, digits: Option<i32>, floor: bool) -> String {
+    let (mut v, mut u) = unit_of(n as f64);
+    if u.is_empty() {
+        return n.to_string();
+    }
+    let round = |v: f64, u: &str| {
+        let d = digits.unwrap_or(if u == "K" && v >= 10.0 { 0 } else { 1 });
+        let places = if v >= 100.0 && digits.is_none() { 0 } else { d };
+        let k = 10f64.powi(places);
+        (if floor { (v * k + 1e-9).floor() / k } else { (v * k).round() / k }, places)
+    };
+    let (mut r, mut places) = round(v, u);
+    // Rounding can carry into the next unit (999.6K -> 1000K): step up instead.
+    if r >= 1000.0 {
+        let next = match u {
+            "K" => Some("M"),
+            "M" => Some("B"),
+            "B" => Some("T"),
+            _ => None,
+        };
+        if let Some(next) = next {
+            (v, u) = (v / 1000.0, next);
+            (r, places) = round(v, u);
+        }
+    }
+    let mut s = format!("{:.*}", places as usize, r);
+    if s.contains('.') {
+        s = s.trim_end_matches('0').trim_end_matches('.').to_string();
+    }
+    s + u
+}
+
+/// The value of a compact count ("1.96M" -> 1_960_000).
+fn parse_tokens(s: &str) -> f64 {
+    let (num, mult) = match s.chars().last() {
+        Some('K') => (&s[..s.len() - 1], 1e3),
+        Some('M') => (&s[..s.len() - 1], 1e6),
+        Some('B') => (&s[..s.len() - 1], 1e9),
+        Some('T') => (&s[..s.len() - 1], 1e12),
+        _ => (s, 1.0),
+    };
+    num.parse::<f64>().map(|v| v * mult).unwrap_or(0.0)
+}
+
+/// Compact token count: 12K, 4.2M, 6.1B.
+pub fn human(n: u64) -> String {
+    format_tokens(n, None, false)
+}
+
+/// A count shown against a goal, like the frontend's `formatTowardGoal`: it
+/// never rounds up to (or past) the goal while the goal is unmet. 1,967,000
+/// of 2M reads "1.96M", not "2M".
+pub fn toward_goal(n: u64, goal: u64) -> String {
+    if goal == 0 || n >= goal || n == 0 {
+        return human(n);
+    }
+    let goal_label = human(goal);
+    let plain = human(n);
+    let g = goal as f64;
+    if parse_tokens(&plain) < g && plain != goal_label && (n as f64) < g * 0.95 {
+        return plain;
+    }
+    let (v, _) = unit_of(n as f64);
+    let int_digits = (v.floor() as u64).to_string().len() as i32;
+    for d in (3 - int_digits).max(1)..=4 {
+        let s = format_tokens(n, Some(d), true);
+        if s != goal_label && parse_tokens(&s) < g {
+            return s;
+        }
+    }
+    format_tokens(n, Some(4), true)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::human;
+    use super::{human, parse_tokens, toward_goal};
 
     #[test]
     fn human_numbers() {
         assert_eq!(human(0), "0");
         assert_eq!(human(999), "999");
+        assert_eq!(human(8_500), "8.5K");
         assert_eq!(human(12_345), "12K");
+        assert_eq!(human(412_000), "412K");
+        assert_eq!(human(999_600), "1M");
+        assert_eq!(human(1_000_000), "1M");
         assert_eq!(human(4_200_000), "4.2M");
+        assert_eq!(human(61_440_000), "61.4M");
+        assert_eq!(human(412_300_000), "412M");
         assert_eq!(human(6_100_000_000), "6.1B");
+    }
+
+    #[test]
+    fn counts_toward_a_goal_never_round_up_to_it() {
+        assert_eq!(toward_goal(1_967_000, 2_000_000), "1.96M");
+        assert_eq!(toward_goal(1_999_400, 2_000_000), "1.99M");
+        assert_eq!(toward_goal(3_960_000, 4_000_000), "3.96M");
+        assert_eq!(toward_goal(199_600_000, 200_000_000), "199.6M");
+        assert_eq!(toward_goal(99_700, 100_000), "99.7K");
+        assert_eq!(toward_goal(999_600, 1_000_000), "999.6K");
+        // Far from the goal, at it, or past it: the plain label.
+        assert_eq!(toward_goal(959_000, 3_000_000), "959K");
+        assert_eq!(toward_goal(1_200_000, 2_000_000), "1.2M");
+        assert_eq!(toward_goal(2_000_000, 2_000_000), "2M");
+        assert_eq!(toward_goal(2_400_000, 2_000_000), "2.4M");
+        assert_eq!(toward_goal(0, 2_000_000), "0");
+        assert_eq!(toward_goal(1_967_000, 0), "2M");
+    }
+
+    #[test]
+    fn toward_goal_sweep_stays_below_the_goal() {
+        for goal in [500_000u64, 1_000_000, 2_000_000, 2_500_000, 20_000_000, 150_000_000, 1_000_000_000] {
+            let mut f = 0.9;
+            while f < 1.0 {
+                let n = (goal as f64 * f).floor() as u64;
+                let s = toward_goal(n, goal);
+                assert!(parse_tokens(&s) < goal as f64, "{n} of {goal} -> {s}");
+                assert_ne!(s, human(goal), "{n} of {goal}");
+                f += 0.0007;
+            }
+        }
     }
 }

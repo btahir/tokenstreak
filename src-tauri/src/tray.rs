@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter, LogicalPosition, Manager, WebviewUrl, WebviewWin
 use tauri_plugin_autostart::ManagerExt;
 use tokenstreak_core::api::{AppSnapshot, MenuBarDisplay, Settings};
 
-use crate::worker::{human, Core, Msg};
+use crate::worker::{toward_goal, Core, Msg};
 
 pub const TRAY_ID: &str = "tokenstreak-tray";
 
@@ -459,8 +459,18 @@ fn position_popover(app: &AppHandle, w: &WebviewWindow) {
 pub fn title_for(snap: &AppSnapshot, display: MenuBarDisplay) -> Option<String> {
     match display {
         MenuBarDisplay::Icon => None,
-        MenuBarDisplay::Today => Some(human(snap.today.tokens.total)),
+        MenuBarDisplay::Today => Some(toward_goal(snap.today.tokens.total, snap.today.goal)),
         MenuBarDisplay::Streak => Some(format!("{}d", snap.streak.current)),
+    }
+}
+
+/// Whole percent of the goal, never shown as 100 before the goal is met.
+fn percent_of_goal(progress: f64) -> String {
+    let p = progress * 100.0;
+    if p < 100.0 {
+        format!("{:.0}", p.floor())
+    } else {
+        format!("{:.0}", p.round())
     }
 }
 
@@ -476,9 +486,9 @@ pub fn update(app: &AppHandle, snap: &AppSnapshot, settings: &Settings) {
     }
     let title = title_for(snap, settings.menu_bar);
     let tip = format!(
-        "Tokenstreak: {} today ({:.0}% of goal), {}-day streak",
-        human(snap.today.tokens.total),
-        snap.today.progress * 100.0,
+        "Tokenstreak: {} today ({}% of goal), {}-day streak",
+        toward_goal(snap.today.tokens.total, snap.today.goal),
+        percent_of_goal(snap.today.progress),
         snap.streak.current
     );
     let mut last = LAST_TEXT.lock();
@@ -570,6 +580,14 @@ mod tests {
         // A rect that is on no display (hidden behind the notch).
         assert_eq!(popover_origin(Some((-100.0, -100.0, 0.0, 0.0)), &[a], 380.0, None), Some((1124.0, 43.0)));
         assert_eq!(popover_origin(None, &[], 380.0, None), None);
+    }
+
+    #[test]
+    fn percent_never_claims_the_goal_early() {
+        assert_eq!(percent_of_goal(0.996), "99");
+        assert_eq!(percent_of_goal(1.0), "100");
+        assert_eq!(percent_of_goal(1.236), "124");
+        assert_eq!(percent_of_goal(0.0), "0");
     }
 
     #[test]
