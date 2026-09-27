@@ -17,7 +17,7 @@ const engine = arg("--engine", "chromium");
 const out = `${arg("--out", "shots/trail")}/${engine}`;
 const only = arg("--only", "popover,hero,lab,reveal,goal,cards,tip").split(",");
 const themes = arg("--themes", "light,dark").split(",");
-const heroPresets = arg("--presets", "sparse,first-run-reveal,streak-30,heavy-multi-tool,goal-hit,streak-at-risk,long-history").split(",");
+const heroPresets = arg("--presets", "sparse,streak-30,heavy-multi-tool,goal-hit,streak-at-risk,long-history").split(",");
 mkdirSync(out, { recursive: true });
 
 const browser = await (engine === "webkit" ? webkit : chromium).launch();

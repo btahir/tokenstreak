@@ -1,0 +1,31 @@
+/* Trail surfaces: the hover tooltip and the goal-moment choreography (see src/trail/celebration.ts). */
+
+.tip--trail { z-index: 3; transition: left 90ms var(--ease-out), top 90ms var(--ease-out); }
+.tip__run { margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--line); font: 500 11.5px var(--font-ui); color: var(--ink-2); }
+
+/* streak digit roll: the old digit overlays the new one, then rolls away */
+.ts-rolling { position: relative; }
+.ts-roll-old { position: absolute; pointer-events: none; white-space: nowrap; will-change: transform, opacity; }
+
+/* pill glint: a band of light sweeps across once */
+[data-testid="streak-pill"], .hero__row .hpill { position: relative; }
+.ts-glint::after { content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(105deg, transparent 20%, rgba(255,250,240,.85) 48%, rgba(255,214,168,.5) 54%, transparent 78%);
+  background-size: 260% 100%; background-position: 120% 0; mix-blend-mode: screen; animation: tsGlint 900ms var(--ease-out) forwards; }
+:root[data-theme="light"] .ts-glint::after { mix-blend-mode: normal; opacity: .9; }
+@keyframes tsGlint { to { background-position: -40% 0; } }
+.ts-glint { animation: tsPillPop 620ms var(--ease-spring); }
+@keyframes tsPillPop { 30% { transform: scale(1.06); box-shadow: 0 0 0 4px rgba(255,196,107,.28), 0 0 22px 4px rgba(255,170,110,.45); } }
+
+/* progress bar: a shimmer sweeps along the lit bar */
+.progress.ts-sweep { overflow: visible; }
+.progress.ts-sweep::before { content: ""; position: absolute; inset: -3px 0; border-radius: inherit; pointer-events: none; z-index: 1;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,252,244,.95) 50%, transparent 100%);
+  background-size: 30% 100%; background-repeat: no-repeat; background-position: -40% 0; filter: blur(1.5px);
+  animation: tsSweep 900ms cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+@keyframes tsSweep { to { background-position: 140% 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ts-glint, .ts-glint::after, .progress.ts-sweep::before { animation: none; }
+  .tip--trail { transition: none; }
+}

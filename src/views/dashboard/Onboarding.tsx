@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "../../api";
 import type { AppSnapshot } from "../../api/types";
 import { IconCheck, IconLock } from "../../components/icons";
-import { Glyph, Progress, Toggle, useCountUp } from "../../components/ui";
+import { Glyph, Progress, Toggle } from "../../components/ui";
 import { baseline, buildTrailData, goalDirection, goalPresets, revealFacts, simulateGoal, weeklyFor } from "../../lib/derive";
 import { addDays, daysBetween, formatDate, formatPercent, formatTokens, plural, splitUnit, TOOL_NAMES } from "../../lib/format";
 import { setSoundEnabled } from "../../lib/sound";
@@ -140,12 +140,10 @@ function Reveal({ snap, goal, next }: { snap: AppSnapshot; goal: number; next: (
     return d;
   }, [snap, goal]);
   const facts = revealFacts(snap, goal);
-  const [started, setStarted] = useState(false);
-  useEffect(() => {
-    const t = setTimeout(() => setStarted(true), 60);
-    return () => clearTimeout(t);
-  }, []);
-  const count = useCountUp(started ? facts.total : 0, 2400);
+  // The count follows the light: it reports the share of tokens drawn so far.
+  const [drawn, setDrawn] = useState(reduced ? 1 : 0);
+  const landed = drawn >= 1;
+  const count = facts.total * drawn;
   const [num, unit] = splitUnit(formatTokens(count));
   const [revealKey, setRevealKey] = useState(0);
   const ready = useRef(false);
@@ -157,8 +155,8 @@ function Reveal({ snap, goal, next }: { snap: AppSnapshot; goal: number; next: (
   }, []);
   return (
     <div className="onb__full" data-testid="reveal">
-      <TrailCanvas data={data} theme={theme} variant="full" layout={REVEAL_LAYOUT} revealKey={revealKey} reducedMotion={reduced} ariaLabel={`Your history: ${formatTokens(facts.total)} tokens since ${facts.since ?? "today"}`} />
-      <div className="onb__over">
+      <TrailCanvas data={data} theme={theme} variant="full" layout={REVEAL_LAYOUT} revealKey={revealKey} reducedMotion={reduced} onRevealProgress={setDrawn} ariaLabel={`Your history: ${formatTokens(facts.total)} tokens since ${facts.since ?? "today"}`} />
+      <div className="onb__over" data-trail-avoid="children">
         <div className="eyebrow onb__eye">Here’s your history</div>
         <h1 className="onb__since">{facts.since ? `Since ${formatDate(facts.since)} your agents have written` : "Today your agents have written"}</h1>
         <div className="onb__big" data-testid="reveal-total">
@@ -166,11 +164,16 @@ function Reveal({ snap, goal, next }: { snap: AppSnapshot; goal: number; next: (
           {unit}
           <small>tokens</small>
         </div>
-        <div className="facts-row">
-          <Fact d={1.4} label="Days you showed up" value={String(facts.daysShowedUp)} />
-          <Fact d={1.6} label="Longest run" value={plural(facts.longestRun, "day")} />
-          <Fact d={1.8} label="Busiest day" value={facts.busiest ? `${formatTokens(facts.busiest.total)} · ${formatDate(facts.busiest.date)}` : "—"} />
-          <Fact d={2.0} label="From cache" value={formatPercent(facts.cacheShare)} />
+        {/* the facts stagger in once the head has landed */}
+        <div className="facts-row" style={{ minHeight: 62 }} data-testid="reveal-facts">
+          {landed && (
+            <>
+              <Fact d={0.08} label="Days you showed up" value={String(facts.daysShowedUp)} />
+              <Fact d={0.2} label="Longest run" value={plural(facts.longestRun, "day")} />
+              <Fact d={0.32} label="Busiest day" value={facts.busiest ? `${formatTokens(facts.busiest.total)} · ${formatDate(facts.busiest.date)}` : "—"} />
+              <Fact d={0.44} label="From cache" value={formatPercent(facts.cacheShare)} />
+            </>
+          )}
         </div>
         <div className="onb__cta">
           <span>Each stretch of light is a run of good days. Gaps are days off.</span>

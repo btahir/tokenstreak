@@ -1,7 +1,7 @@
 // "Your trail": the full Trail with a hover tooltip, stat tiles, charts, the
 // efficiency score, a year of light, breakdowns and recent achievements.
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import type { AppSnapshot, Breakdown, RangeKind } from "../../api/types";
 import { Badge } from "../../components/badges";
 import { BarChart, Heatmap, RankList, Sparkline } from "../../components/charts";
@@ -26,6 +26,8 @@ import { addDays, formatDate, formatInt, formatLongDate, formatPercent, formatTo
 import { useReducedMotion, useResolvedTheme } from "../../lib/theme";
 import { useAppState, useBreakdown } from "../../state/store";
 import { TrailCanvas } from "../../trail/TrailCanvas";
+import { TrailTip } from "../../trail/TrailTip";
+import { useGoalMoment } from "../../trail/celebration";
 import type { TrailHover } from "../../trail/types";
 import type { Route } from "../route";
 import { PageHead } from "./PageHead";
@@ -86,16 +88,13 @@ function Hero({ snap, maxDays }: { snap: AppSnapshot; maxDays: number }) {
   const t = snap.today;
   const tier = tierInfo(snap.streak.current);
   const afterglow = snap.streak.current === 0 && snap.streak.longest > 0 ? tierInfo(snap.streak.longest) : null;
-  const [celebrateKey, setCelebrateKey] = useState(0);
-  const [lastCeleb, setLastCeleb] = useState<string | null>(null);
-  if (celebration && celebration.date !== lastCeleb) {
-    setLastCeleb(celebration.date);
-    setCelebrateKey((k) => k + 1);
-  }
+  const heroRef = useRef<HTMLElement>(null);
+  // the same goal-moment choreography as the popover, without its toast
+  const { celebrateKey } = useGoalMoment({ celebration, visible: true, reduced, root: heroRef });
   const layout = useMemo(() => ({ maxDays }), [maxDays]);
   const pct = Math.round(t.progress * 100);
   return (
-    <section className="hero ts-grain" data-testid="hero">
+    <section className="hero ts-grain" data-testid="hero" ref={heroRef}>
       <TrailCanvas
         data={data}
         theme={theme}
@@ -107,7 +106,7 @@ function Hero({ snap, maxDays }: { snap: AppSnapshot; maxDays: number }) {
         keyboard
         ariaLabel={`${trailSummary(snap)}. Use the arrow keys to step through days.`}
       />
-      <div className="hero__hud">
+      <div className="hero__hud" data-trail-avoid="children">
         <div className="hero__lab">{t.met ? "Goal lit today" : "Today’s light"}</div>
         <div className="hero__num">
           {formatTowardGoal(t.tokens.total, t.goal)}
@@ -121,12 +120,12 @@ function Hero({ snap, maxDays }: { snap: AppSnapshot; maxDays: number }) {
           {t.goal > 0 && <span className="hpill">{t.met ? `Lit · ${progressLabel(t.progress)}` : `${pct}% · ${formatTokens(t.remaining)} to go`}</span>}
         </div>
       </div>
-      <span className="hpill hero__tier" data-testid="tier-chip">
+      <span className="hpill hero__tier" data-testid="tier-chip" data-trail-avoid>
         {afterglow
           ? `${afterglow.name} afterglow · from your ${formatInt(snap.streak.longest)}-day run`
           : `${tier.name} tier${tier.next ? ` · ${tier.next} in ${formatInt(tier.daysToNext ?? 0)} ${tier.daysToNext === 1 ? "day" : "days"}` : " · the brightest"}`}
       </span>
-      <div className="hero__legend">
+      <div className="hero__legend" data-trail-avoid>
         <span>
           <Glyph tool="claude" />
           Claude Code
@@ -141,7 +140,7 @@ function Hero({ snap, maxDays }: { snap: AppSnapshot; maxDays: number }) {
         </span>
         <span className="hero__legend-note">Width = tokens · breaks = missed days</span>
       </div>
-      {hover && <HeroTip hover={hover} />}
+      {hover && <TrailTip hover={hover} />}
     </section>
   );
 }
@@ -151,38 +150,6 @@ export function streakLine(current: number, longest: number): string {
   if (current > 0) return current >= longest ? `${formatInt(current)}-day streak · your best` : `${formatInt(current)}-day streak · best ${formatInt(longest)}`;
   if (longest > 0) return `Best run ${formatInt(longest)} ${longest === 1 ? "day" : "days"} · start a new one`;
   return "Your trail starts today";
-}
-
-function HeroTip({ hover }: { hover: TrailHover }) {
-  const d = hover.day;
-  const goal = d.goal ?? 0;
-  const tools = (Object.entries(d.tools) as [keyof typeof TOOL_SHORT, number][]).filter(([, v]) => v > 0.005).sort((a, b) => b[1] - a[1]);
-  const left = hover.x < 140;
-  return (
-    <div
-      className="tip tip--float tip--trail"
-      style={{ left: hover.x, top: hover.y, transform: `translate(${left ? "-12px" : "-50%"}, calc(-100% - 18px))` }}
-      role="tooltip"
-      data-testid="trail-tip"
-    >
-      <div className="tip__h">{d.isToday ? "Today" : d.date ? formatDate(d.date) : ""}</div>
-      <b className="tip__num">{d.tokens ? formatTokens(d.tokens) : "No tokens"}</b>
-      <div className="tip__foot">
-        {d.goalMet ? "Goal lit" : d.frozen ? (d.freeze ? "Streak freeze · streak kept" : "Rest day · streak kept") : d.tokens ? (goal ? `${Math.round((d.tokens / goal) * 100)}% of goal` : "Under goal") : d.isToday ? "Just getting started" : "Day off"}
-        {d.tokens > 0 && ` · ${formatPercent(d.cacheShare)} cache`}
-      </div>
-      {tools.length > 0 && (
-        <div className="tip__rows">
-          {tools.map(([k, v]) => (
-            <span key={k}>
-              <i className={`glyph glyph--${k}`} />
-              {TOOL_SHORT[k]} {formatPercent(v)}
-            </span>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 }
 
 /* ---------------- tiles ---------------- */

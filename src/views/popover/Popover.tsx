@@ -12,8 +12,8 @@ import { formatAgo, formatChange, formatInt, formatTokens, formatTowardGoal, for
 import { playCue } from "../../lib/sound";
 import { useReducedMotion, useResolvedTheme } from "../../lib/theme";
 import { acknowledgeCelebration, getState, useApi, useAppState, useSnapshot } from "../../state/store";
-import { MILESTONES } from "../../trail/Trail";
 import { TrailCanvas } from "../../trail/TrailCanvas";
+import { useGoalMoment } from "../../trail/celebration";
 import { FirstRun } from "./FirstRun";
 import { openDashboardAt } from "../route";
 
@@ -89,31 +89,22 @@ function PopoverMain({ snap }: { snap: AppSnapshot }) {
   const api = useApi();
   const visible = useAppState((s) => s.popoverVisible);
   const celebration = useAppState((s) => s.celebration);
-  const [celebrateKey, setCelebrateKey] = useState(0);
-  const [toast, setToast] = useState<string | null>(null);
+  const skyRef = useRef<HTMLDivElement>(null);
   const [refreshing, setRefreshing] = useState(false);
   const t = snap.today;
   const data = useMemo(() => buildTrailData(snap, { maxDays: 42 }), [snap]);
 
-  // Goal-hit moment: once per day, when the popover is on screen.
-  useEffect(() => {
-    if (!celebration || !visible) return;
-    const milestone = MILESTONES.includes(celebration.streak);
-    const t1 = setTimeout(() => {
-      setCelebrateKey((k) => k + 1);
-      playCue(milestone ? "milestone" : "goal");
-    }, 120);
-    const t2 = setTimeout(() => setToast(celebrationLine(celebration.streak, celebration.newRecord)), 320);
-    const t3 = setTimeout(() => {
-      setToast(null);
-      void acknowledgeCelebration();
-    }, 3600);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-    };
-  }, [celebration, visible]);
+  // Goal-hit moment: once per day, when the popover is on screen (see trail/celebration.ts).
+  const { celebrateKey, toast } = useGoalMoment({
+    celebration,
+    visible,
+    reduced,
+    root: skyRef,
+    scope: ".pop",
+    toastText: celebrationLine,
+    onIgnite: (milestone) => playCue(milestone ? "milestone" : "goal"),
+    onDone: () => void acknowledgeCelebration(),
+  });
 
   const tiles = todayTiles(snap);
   const cacheDelta = cacheDeltaCopy(tiles.cacheDeltaPts);
@@ -147,7 +138,7 @@ function PopoverMain({ snap }: { snap: AppSnapshot }) {
 
   return (
     <>
-      <div className="sky">
+      <div className="sky" ref={skyRef}>
         <TrailCanvas
           data={data}
           theme={theme}
@@ -158,7 +149,7 @@ function PopoverMain({ snap }: { snap: AppSnapshot }) {
           ariaLabel={trailSummary(snap)}
         />
         <div className="sky__hud">
-          <div className={`topbar${toast ? " topbar--hidden" : ""}`}>
+          <div className={`topbar${toast ? " topbar--hidden" : ""}`} data-trail-avoid>
             <Wordmark size={19} mark={20} />
             <div className="icons">
               <button type="button" className={`ib${refreshing ? " ib--spin" : ""}`} title="Refresh (⌘R)" aria-label="Refresh" onClick={() => void refresh()}>
@@ -178,7 +169,7 @@ function PopoverMain({ snap }: { snap: AppSnapshot }) {
               {toast}
             </div>
           )}
-          <div className="hud-row">
+          <div className="hud-row" data-trail-avoid="children">
             <div>
               <div className="hero-lab">
                 {lit ? (

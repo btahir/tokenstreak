@@ -1,8 +1,13 @@
 // React host for the Trail engine. Creates one engine per canvas, feeds it
 // data/theme, triggers celebrate/reveal by key changes, and pauses it when the
 // host says so (popover hidden) or when the canvas scrolls out of view.
+//
+// HUD safe zones: any element inside the canvas's parent marked
+// `data-trail-avoid` is measured (on resize and DOM changes) and passed to the
+// engine, which routes the path around it.
 
 import { useEffect, useRef } from "react";
+import "../styles/trail.css";
 import { Trail } from "./Trail";
 import type { TrailData, TrailHover, TrailLayout, TrailTheme, TrailVariant } from "./types";
 
@@ -24,6 +29,28 @@ export interface TrailCanvasProps {
   className?: string;
   /** Keyboard stepping through days (full variant). */
   keyboard?: boolean;
+  /** During a reveal: the share of history tokens the light has drawn (0..1). */
+  onRevealProgress?: (p: number) => void;
+  /** Measure `[data-trail-avoid]` HUD elements and route around them (default true). */
+  avoidHud?: boolean;
+}
+
+/** Rectangles of `[data-trail-avoid]` elements inside `host`, relative to `canvas`. */
+export function measureAvoid(canvas: HTMLElement, host: HTMLElement): { x: number; y: number; w: number; h: number }[] {
+  const cr = canvas.getBoundingClientRect();
+  if (!cr.width || !cr.height) return [];
+  const out: { x: number; y: number; w: number; h: number }[] = [];
+  const add = (el: Element) => {
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    out.push({ x: r.left - cr.left, y: r.top - cr.top, w: r.width, h: r.height });
+  };
+  // data-trail-avoid="children" measures each child separately (a row of pills, a text stack)
+  host.querySelectorAll<HTMLElement>("[data-trail-avoid]").forEach((el) => {
+    if (el.dataset.trailAvoid === "children") Array.from(el.children).forEach(add);
+    else add(el);
+  });
+  return out;
 }
 
 export function TrailCanvas(p: TrailCanvasProps) {
@@ -32,6 +59,9 @@ export function TrailCanvas(p: TrailCanvasProps) {
   const visible = useRef(true);
   const hoverCb = useRef(p.onHover);
   hoverCb.current = p.onHover;
+  const revealCb = useRef(p.onRevealProgress);
+  revealCb.current = p.onRevealProgress;
+  const avoidHud = p.avoidHud ?? true;
   const layoutKey = JSON.stringify(p.layout ?? {});
 
   useEffect(() => {
@@ -40,6 +70,28 @@ export function TrailCanvas(p: TrailCanvasProps) {
     const t = new Trail(c, { theme: p.theme, variant: p.variant, layout: p.layout, seed: p.seed, reducedMotion: p.reducedMotion });
     engine.current = t;
     const off = t.onHover((h) => hoverCb.current?.(h));
+    t.onReveal((x) => revealCb.current?.(x));
+    // HUD safe zones
+    const host = c.parentElement;
+    let measureRaf = 0;
+    const measure = () => {
+      cancelAnimationFrame(measureRaf);
+      measureRaf = requestAnimationFrame(() => host && t.setAvoid(measureAvoid(c, host)));
+    };
+    let hudRo: ResizeObserver | null = null;
+    let mo: MutationObserver | null = null;
+    if (host && avoidHud) {
+      t.setAvoid(measureAvoid(c, host));
+      hudRo = new ResizeObserver(measure);
+      hudRo.observe(host);
+      host.querySelectorAll("[data-trail-avoid]").forEach((el) => hudRo!.observe(el));
+      mo = new MutationObserver(() => {
+        host.querySelectorAll("[data-trail-avoid]").forEach((el) => hudRo!.observe(el));
+        measure();
+      });
+      mo.observe(host, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["data-trail-avoid", "class"] });
+      void document.fonts?.ready.then(measure);
+    }
     if (p.data) t.setData(p.data);
     if (p.paused) t.pause();
     p.onReady?.(t);
@@ -58,6 +110,9 @@ export function TrailCanvas(p: TrailCanvasProps) {
     return () => {
       off();
       io.disconnect();
+      hudRo?.disconnect();
+      mo?.disconnect();
+      cancelAnimationFrame(measureRaf);
       t.destroy();
       const all = (window as unknown as { __trails?: Trail[] }).__trails;
       if (all) (window as unknown as { __trails?: Trail[] }).__trails = all.filter((x) => x !== t);
@@ -65,7 +120,7 @@ export function TrailCanvas(p: TrailCanvasProps) {
     };
     // The engine is rebuilt only when its variant or layout changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.variant, layoutKey, p.seed]);
+  }, [p.variant, layoutKey, p.seed, avoidHud]);
 
   const pausedRef = useRef(!!p.paused);
   pausedRef.current = !!p.paused;

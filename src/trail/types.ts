@@ -54,6 +54,10 @@ export interface TrailLayout {
   /** Vertical clamp for the path, as fractions of the height. */
   top?: number;
   bottom?: number;
+  /** Largest day step, in layout units (scaled by the size factor). Default 34 (popover/card) or 58 (full). */
+  maxStep?: number;
+  /** Fixed HUD rectangles (CSS px) the path routes around, in addition to `setAvoid()`. */
+  avoid?: { x: number; y: number; w: number; h: number }[];
 }
 
 export interface TrailOptions {
@@ -86,6 +90,8 @@ export interface TrailHover {
   index: number;
   x: number;
   y: number;
+  /** The run of lit days this day belongs to, if any (dates inclusive). */
+  run?: { days: number; from: string; to: string; current: boolean };
 }
 
 export interface TrailStats {

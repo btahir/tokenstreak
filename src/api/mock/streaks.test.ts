@@ -15,7 +15,7 @@ const presets: MockPreset[] = readdirSync(dir)
 describe("mock presets", () => {
   it("exist for every documented scenario", () => {
     expect(presets.map((p) => p.id).sort()).toEqual(
-      ["first-run-reveal", "goal-hit", "heavy-multi-tool", "new-user", "streak-30", "streak-at-risk"].sort(),
+      ["first-run-reveal", "goal-hit", "heavy-multi-tool", "long-history", "new-user", "sparse", "streak-30", "streak-at-risk"].sort(),
     );
   });
 

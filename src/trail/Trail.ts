@@ -1,33 +1,37 @@
 // The Trail: a ribbon of light that grows one segment per day across a dusk
-// sky. Plain Canvas 2D, no dependencies. Ported from docs/design/signature/trail.js.
+// sky. Plain Canvas 2D, no dependencies.
 //
 //   const trail = new Trail(canvas, { theme: "dark", variant: "popover" });
 //   trail.setData(data);       // re-lays out and re-caches
+//   trail.setAvoid(rects);     // HUD rectangles the path routes around
 //   trail.setProgress(0.9);    // live fraction of today's goal (eases)
 //   trail.celebrate();         // goal-hit moment, once per day
-//   trail.reveal();            // first-run draw-in (2.4 s)
+//   trail.reveal();            // first-run draw-in; onReveal(p) reports tokens drawn
 //   trail.onHover((h) => …);   // "full" variant tooltip
 //   trail.pause(); trail.resume(); trail.destroy();
 //
 // Visual encoding
-//   x          time, one step per day; today is the comet head
-//   y          stable wander seeded by the date + smoothed activity (busy weeks soar)
-//   width      tokens / goal (capped at 2.5x)
-//   continuity lit days form one ribbon; under goal = wisp; zero = gap; frozen = bridge
+//   x          time, one step per day (dense ranges aggregate days: level of detail by zoom)
+//   y          stable wander seeded by the date + smoothed activity, routed around the HUD
+//   width      tokens / goal, with a floor so every day with tokens stays visible
+//   continuity every day with tokens is one continuous thread of light; lit runs swell
+//              into ribbons (the current run brightest, past runs as a cooler afterglow);
+//              a day with no tokens is a clean gap with a single ember; rest days and
+//              spent freezes are a thin moonlight bridge
 //   strands    tool mix (apricot Claude, rose Codex, violet Gemini)
 //   core       efficiency: more cache reuse = whiter, cooler core
 //   head       today's progress: the orb fills its halo ring and ignites at 100%
 //   sky        tier by streak; the horizon warms with today's progress
 //
 // Performance: the sky and the history ribbon are cached offscreen whenever
-// data, size or theme change. Each frame draws only strands, today's segment,
-// the shimmer, the head and a few dozen particles. The loop stops on pause(),
-// when the document is hidden, and drops to `idleFps` after a quiet spell.
+// data, size, theme or HUD rectangles change. Each frame draws only the live
+// strands of the current run, today's segment, the shimmer, the head and a few
+// dozen particles. The loop stops on pause(), when the document is hidden, and
+// drops to `idleFps` after a quiet spell.
 
 import type {
   ToolShares,
   TrailData,
-  TrailDay,
   TrailHover,
   TrailLayout,
   TrailOptions,
@@ -38,6 +42,22 @@ import type {
   TrailVariant,
 } from "./types";
 import { filterBlurWorks, softwareBlur } from "./blur";
+import {
+  bucketDays,
+  classify,
+  clamp,
+  gaussian,
+  lodBucket,
+  placeLabels,
+  routeY,
+  smoothstep,
+  wanderPeriod,
+  type Bucket,
+  type DayIn,
+  type Rect,
+  type Role,
+  type RunInfo,
+} from "./layout";
 
 type RGB = [number, number, number];
 
@@ -51,41 +71,48 @@ interface ThemeDef {
   glowA: number;
   bodyA: number;
   strandA: number;
+  /** Opacity of past runs relative to the current one. */
   pastDim: number;
-  wMul: number;
+  /** Filament opacity: base + per-unit-of-goal. */
+  filA: [number, number];
   bodyMul: number;
   bodyBlur: number;
   glowMul: number;
   coreA: number;
-  /** Tint mixed into glow colours (light theme warms its halo). */
+  coreW: number;
+  /** Tint mixed into glow colours (light theme warms its bloom). */
   glowTint: RGB | null;
   glowTintAmt: number;
+  /** Cooler tint for past runs (the afterglow). */
+  afterglow: RGB;
+  afterAmt: number;
+  /** Light theme: the body runs from rose (start of a run) to apricot (its head). */
+  ramp: [RGB, RGB] | null;
+  rampAmt: number;
   star: string;
   starA: number;
   starCount: number;
   text: string;
+  textHalo: string;
   halo: string;
   ring: RGB;
   ringA: number;
   horizon: string;
-  /** A soft sun disc low behind the head (light theme). */
   sun: string | null;
-  /** Darker rim drawn under the body for definition on pale skies. */
-  rim: RGB | null;
-  rimA: number;
-  wisp: number;
-  /** A lighter inner band inside the body (0 = off): gives the light ribbon a silky, lit-tube look. */
-  inner: number;
-  innerTint: RGB;
-  /** Soft drop shadow under the ribbon (light theme: a silk ribbon lifted off paper). */
+  /** Soft drop shadow under the ribbon (light theme: lifts it off the paper). */
   shadow: string | null;
-  /** Core width as a fraction of the body. */
-  coreW: number;
-  /** How far strand colours are mixed toward white. */
   strandWhite: number;
+  /** Strand wiggle wavelength, in layout units. */
+  strandWave: number;
   shimmer: RGB;
   shimmerA: number;
   spark: RGB;
+  ember: RGB;
+  /** Celebration particles: fills and an optional darker edge (light theme). */
+  confetti: RGB[];
+  confettiEdge: number;
+  flash: RGB;
+  flashA: number;
 }
 
 export const THEMES: Record<TrailTheme, ThemeDef> = {
@@ -96,46 +123,57 @@ export const THEMES: Record<TrailTheme, ThemeDef> = {
     core: [255, 247, 234],
     coolCore: [226, 240, 255],
     blend: "lighter",
-    glowA: 0.55, bodyA: 0.9, strandA: 0.8, pastDim: 0.4, wMul: 1, bodyMul: 1.15, bodyBlur: 1.6, glowMul: 3.6, coreA: 0.95,
+    glowA: 0.5, bodyA: 0.74, strandA: 0.75, pastDim: 0.42, filA: [0.4, 0.25], bodyMul: 1.1, bodyBlur: 1.3, glowMul: 3.4, coreA: 0.85, coreW: 0.24,
     glowTint: null, glowTintAmt: 0,
+    afterglow: [196, 170, 255], afterAmt: 0.4,
+    ramp: null, rampAmt: 0,
     star: "rgba(255,248,240,", starA: 0.8, starCount: 70,
-    text: "rgba(255,244,234,0.72)", halo: "rgba(255,244,234,0.35)",
+    text: "rgba(255,244,234,0.78)", textHalo: "rgba(26,20,51,0.55)", halo: "rgba(255,244,234,0.35)",
     ring: [255, 226, 190], ringA: 0.9,
     horizon: "rgba(255,190,130,",
     sun: null,
-    rim: null, rimA: 0,
-    wisp: 0.45,
-    inner: 0, innerTint: [255, 247, 234], strandWhite: 0.45, shadow: null, coreW: 0.24,
-    shimmer: [255, 247, 234], shimmerA: 0.55,
+    shadow: null,
+    strandWhite: 0.45, strandWave: 30,
+    shimmer: [255, 247, 234], shimmerA: 0.5,
     spark: [255, 244, 225],
+    ember: [255, 190, 130],
+    confetti: [[255, 172, 112], [246, 110, 142], [156, 126, 250], [255, 247, 234], [255, 214, 140]],
+    confettiEdge: 0,
+    flash: [255, 222, 196], flashA: 0.16,
   },
-  // Golden hour. Additive light can't glow on a pale sky, so the ribbon is a
-  // saturated dusk body with a warm halo, a crisp darker rim and a white core.
+  // Golden hour. Additive light can't glow on a pale sky, so the ribbon is one
+  // saturated dusk body (rose into apricot along its length) with a soft warm
+  // bloom, a single thin white core and a faint drop shadow. No outlines.
   light: {
     sky: [[0, "#ECE4FB"], [0.36, "#F6E2EE"], [0.7, "#FFE0CC"], [0.9, "#FFEBD9"], [1, "#FFF3E6"]],
     hills: ["rgba(242,208,222,0.78)", "rgba(250,226,222,1)"],
-    tool: { claude: [248, 132, 68], codex: [234, 80, 120], gemini: [120, 88, 232], other: [150, 140, 170] },
+    tool: { claude: [247, 128, 70], codex: [232, 78, 122], gemini: [124, 92, 230], other: [150, 140, 170] },
     core: [255, 253, 248],
-    coolCore: [240, 248, 255],
+    coolCore: [244, 250, 255],
     blend: "source-over",
-    glowA: 0.36, bodyA: 1, strandA: 0.5, pastDim: 0.5, wMul: 1.05, bodyMul: 1, bodyBlur: 0.45, glowMul: 4.4, coreA: 0.95,
-    glowTint: [255, 196, 128], glowTintAmt: 0.6,
+    glowA: 0.3, bodyA: 1, strandA: 0.22, pastDim: 0.5, filA: [0.55, 0.15], bodyMul: 1, bodyBlur: 0.55, glowMul: 2.6, coreA: 0.92, coreW: 0.16,
+    glowTint: [255, 186, 130], glowTintAmt: 0.55,
+    afterglow: [186, 132, 206], afterAmt: 0.26,
+    ramp: [[232, 84, 128], [255, 142, 84]], rampAmt: 0.6,
     star: "rgba(240,150,110,", starA: 0.34, starCount: 14,
-    text: "rgba(35,29,51,0.62)", halo: "rgba(35,29,51,0.2)",
-    ring: [232, 93, 122], ringA: 0.78,
+    text: "rgba(35,29,51,0.7)", textHalo: "rgba(255,246,238,0.8)", halo: "rgba(35,29,51,0.2)",
+    ring: [226, 80, 116], ringA: 0.82,
     horizon: "rgba(255,196,140,",
     sun: "rgba(255,214,170,",
-    rim: [150, 50, 90], rimA: 0.05,
-    wisp: 0.55,
-    inner: 0.8, innerTint: [255, 226, 196], strandWhite: 0.3, shadow: "rgba(150,56,96,0.18)", coreW: 0.13,
-    shimmer: [255, 250, 236], shimmerA: 0.85,
-    spark: [255, 184, 120],
+    shadow: "rgba(168,64,96,0.16)",
+    strandWhite: 0.55, strandWave: 52,
+    shimmer: [255, 250, 238], shimmerA: 0.6,
+    spark: [255, 172, 110],
+    ember: [236, 112, 96],
+    confetti: [[246, 122, 58], [228, 64, 112], [116, 80, 226], [255, 178, 60], [240, 96, 150]],
+    confettiEdge: 0.5,
+    flash: [255, 246, 232], flashA: 0.28,
   },
 };
 
 export const VARIANTS: Record<TrailVariant, TrailLayout> = {
-  popover: { headX: 0.84, left: -0.04, baseY: 0.56, amp: 0.12, rise: 0.16, maxDays: 42, wMin: 1.4, wMax: 11, headR: 15, hills: true, labels: false },
-  full: { headX: 0.92, left: 0.02, baseY: 0.62, amp: 0.13, rise: 0.26, maxDays: 400, wMin: 1.4, wMax: 18, headR: 14, hills: true, labels: true },
+  popover: { headX: 0.84, left: -0.04, baseY: 0.5, amp: 0.1, rise: 0.12, maxDays: 42, wMin: 1.4, wMax: 11, headR: 15, hills: true, labels: false, top: 0.18, bottom: 0.84 },
+  full: { headX: 0.92, left: 0.02, baseY: 0.6, amp: 0.12, rise: 0.22, maxDays: 400, wMin: 1.4, wMax: 17, headR: 14, hills: true, labels: true, maxStep: 80, top: 0.1, bottom: 0.86 },
   card: { headX: 0.86, left: -0.04, baseY: 0.6, amp: 0.12, rise: 0.16, maxDays: 180, wMin: 1.8, wMax: 18, headR: 17, hills: true, labels: false },
   icon: { headX: 0.8, left: 0.05, baseY: 0.6, amp: 0.1, rise: 0.2, maxDays: 30, wMin: 2, wMax: 10, headR: 12, hills: false, labels: false },
 };
@@ -151,6 +189,8 @@ export const TIERS: TrailTier[] = [
 export const MILESTONES = [7, 30, 100, 365];
 const TOOLS: TrailTool[] = ["claude", "codex", "gemini"];
 const FROZEN_COL: RGB = [169, 216, 245];
+/** Seconds the first-run draw-in takes. */
+export const REVEAL_SECONDS = 2.6;
 
 export function tierFor(streak: number): TrailTier {
   let r = TIERS[0]!;
@@ -163,19 +203,12 @@ export function nextTier(streak: number): TrailTier | null {
   return TIERS.find((t) => t.min > streak) ?? null;
 }
 
-const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
-const easeOutQuint = (t: number) => 1 - Math.pow(1 - t, 5);
 const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 const spring = (t: number) => 1 - Math.exp(-6 * t) * Math.cos(10 * t);
 const rgba = (c: RGB, a: number) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${Math.max(0, Math.min(1, a)).toFixed(3)})`;
 const mixRGB = (a: RGB, b: RGB, t: number): RGB => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
-
-function hash(n: number): number {
-  n = (n << 13) ^ n;
-  return 1 - ((n * (n * n * 15731 + 789221) + 1376312589) & 0x7fffffff) / 1073741824;
-}
 
 /** Mulberry32: small deterministic PRNG. */
 export function rng(seed: number): () => number {
@@ -208,34 +241,47 @@ function toolColor(theme: ThemeDef, tools: ToolShares): RGB {
   return s > 0 ? [c[0] / s, c[1] / s, c[2] / s] : theme.tool.claude;
 }
 
-type Kind = "today" | "lit" | "frozen" | "wisp" | "dark";
+/** One drawn point: a day, or a bucket of days in dense layouts. */
 interface Pt {
   x: number;
   y: number;
-  kind: Kind;
+  /** Ribbon width (px) after smoothing. */
   wd: number;
+  /** Intensity 0..1 after smoothing. */
+  a: number;
+  /** Afterglow (cool) tint amount 0..1. */
+  cool: number;
+  /** Position along its run, 0 (start) .. 1 (end), for the light body ramp. */
+  u: number;
   col: RGB;
   tools: ToolShares;
   cache: number;
-  day: TrailDay & { isToday?: boolean };
-  i: number;
+  role: Role;
+  b: Bucket;
 }
 interface Sample {
   x: number;
   y: number;
-  seg: number;
   wd: number;
+  a: number;
+  cool: number;
+  u: number;
   col: RGB;
   cache: number;
   sh: number[];
   nx: number;
   ny: number;
+  /** Point index where this sample's segment starts. */
+  seg: number;
 }
-interface Run {
-  a: number;
-  b: number;
-  current: boolean;
-  startDay: number;
+/** A contiguous stretch of light between gaps. */
+interface Piece {
+  p0: number;
+  p1: number;
+  s0: number;
+  s1: number;
+  /** Ends at today's head (its last segment is drawn live). */
+  head: boolean;
 }
 interface Particle {
   x: number;
@@ -256,6 +302,20 @@ interface Star {
   s: number;
   ph: number;
   sp: number;
+}
+interface Milestone {
+  m: number;
+  x: number;
+  y: number;
+  /** Ribbon y at the milestone day (for the roll call). */
+  ry: number;
+  label: { visible: boolean; x: number; y: number };
+}
+interface Ember {
+  x: number;
+  y: number;
+  r: number;
+  a: number;
 }
 
 type Ctx = CanvasRenderingContext2D;
@@ -285,9 +345,12 @@ export class Trail {
   private dirty = true;
   private raf = 0;
   private celebrateAt = -1;
+  private celebrateMilestone = false;
   private revealAt = -1;
   private revealing = false;
-  private hover: Pt | null = null;
+  private revealCb: ((p: number) => void) | null = null;
+  private lastRevealP = -1;
+  private hoverDay: number | null = null;
   private hoverCb: ((h: TrailHover | null) => void) | null = null;
   private progressShown = 0;
   private progressTarget = 0;
@@ -305,20 +368,35 @@ export class Trail {
   private hiddenPause = false;
   private userPaused = false;
   private frameTimes: number[] = [];
+  private avoid: Rect[] = [];
+  private avoidKey = "";
   readonly stats: TrailStats = { frameMs: 0, maxFrameMs: 0, cacheMs: 0, frames: 0 };
 
-  // geometry (valid after _layout)
+  // geometry (valid after layout)
   private w = 0;
   private h = 0;
   private dpr = 1;
   private k = 1;
+  /** Pixel step between points and between days. */
   private step = 0;
+  private dayStep = 0;
+  private dayX0 = 0;
   private S = 2;
+  private days: DayIn[] = [];
+  private cum: number[] = [];
   private pts: Pt[] = [];
   private samples: Sample[] = [];
-  private runs: Run[] = [];
+  private pieces: Piece[] = [];
+  private runs: RunInfo[] = [];
+  private curRun: { s0: number; s1: number; p0: number; p1: number; days: number } | null = null;
+  /** Last sample of the cached ribbon (today's segment is live after it). */
+  private cacheEnd = -1;
+  /** Today's fraction of the goal baked into the cached ribbon. */
+  private bakedProgress = 0;
+  private sparks: Pt[] = [];
+  private embers: Ember[] = [];
   private head = { x: 0, y: 0 };
-  private milestones: { m: number; x: number; y: number }[] = [];
+  private milestones: Milestone[] = [];
   private stars: Star[] = [];
 
   constructor(canvas: HTMLCanvasElement, opts: TrailOptions = {}) {
@@ -375,13 +453,28 @@ export class Trail {
     this.kick();
   }
 
+  /**
+   * HUD rectangles (CSS px, relative to the canvas) the path must route
+   * around. Rounded to 4 px; only a real change re-lays out.
+   */
+  setAvoid(rects: Rect[]): void {
+    const q = (n: number) => Math.round(n / 4) * 4;
+    const r = rects.filter((x) => x.w > 0 && x.h > 0).map((x) => ({ x: q(x.x), y: q(x.y), w: q(x.w), h: q(x.h) }));
+    const key = JSON.stringify(r);
+    if (key === this.avoidKey) return;
+    this.avoidKey = key;
+    this.avoid = r;
+    this.dirty = true;
+    this.kick();
+  }
+
   /** Live update of today's fraction of the goal; eases toward it. */
   setProgress(p: number): void {
     if (!this.data) return;
     const was = this.data.today.tokens >= this.data.goal && this.data.goal > 0;
     this.data.today.tokens = p * this.data.goal;
     this.progressTarget = p;
-    if (p >= 1 !== was) this.dirty = true;
+    if (p >= 1 !== was || Math.abs(p - this.bakedProgress) > 0.015) this.dirty = true;
     this.kick();
   }
 
@@ -398,23 +491,38 @@ export class Trail {
     this.kick();
   }
 
-  /** Goal-hit moment: shockwave, spark burst, shimmer racing back down the run. */
+  /**
+   * Goal-hit moment: the comet ignites (shockwave, burst, sky brightens), then
+   * a flash races back along the streak and every lit day pulses once in
+   * sequence (the roll call). Milestone days add a large star-pop.
+   */
   celebrate(): void {
     this.celebrateAt = this.t;
     this.progressShown = Math.max(this.progressShown, Math.min(1, this.progressTarget));
+    this.celebrateMilestone = !!this.data && MILESTONES.includes(this.data.streak.current);
     this.burst();
     this.kick();
   }
 
-  /** First-run draw-in over 2.4 s. */
+  /** First-run draw-in over REVEAL_SECONDS. */
   reveal(): void {
     this.revealAt = this.t;
     this.revealing = true;
+    this.lastRevealP = -1;
+    if (this.reduced) {
+      this.revealing = false;
+      this.revealCb?.(1);
+    }
     this.kick();
   }
 
+  /** Reports the share of history tokens drawn so far during a reveal (0..1). */
+  onReveal(cb: ((p: number) => void) | null): void {
+    this.revealCb = cb;
+  }
+
   get isRevealing(): boolean {
-    return this.revealing && this.t - this.revealAt < 2.4;
+    return this.revealing && this.t - this.revealAt < REVEAL_SECONDS;
   }
 
   /** Subscribe to hover changes (full variant). Returns an unsubscribe. */
@@ -427,20 +535,19 @@ export class Trail {
 
   /** Keyboard access: move the hover to a day index (clamped); null clears. */
   hoverIndex(i: number | null): TrailHover | null {
-    if (i === null || !this.pts.length) {
+    if (i === null || !this.days.length) {
       this.clearHover();
       return null;
     }
-    const p = this.pts[clamp(Math.round(i), 0, this.pts.length - 1)]!;
-    return this.setHover(p);
+    return this.setHover(clamp(Math.round(i), 0, this.days.length - 1));
   }
 
   get hoveredIndex(): number | null {
-    return this.hover ? this.hover.i : null;
+    return this.hoverDay;
   }
 
   get dayCount(): number {
-    return this.pts.length;
+    return this.days.length;
   }
 
   pause(): void {
@@ -466,6 +573,7 @@ export class Trail {
     if (this.onMove) this.canvas.removeEventListener("pointermove", this.onMove);
     if (this.onLeave) this.canvas.removeEventListener("pointerleave", this.onLeave);
     this.hoverCb = null;
+    this.revealCb = null;
   }
 
   tier(): TrailTier {
@@ -474,6 +582,16 @@ export class Trail {
 
   headPosition(): { x: number; y: number } | null {
     return this.pts.length ? { ...this.head } : null;
+  }
+
+  /** Debug/test view of the laid-out geometry (CSS px). */
+  geometry(): { head: { x: number; y: number }; points: { x: number; y: number; wd: number; role: Role }[]; labels: { m: number; visible: boolean; x: number; y: number }[]; lod: number } {
+    return {
+      head: { ...this.head },
+      points: this.pts.map((p) => ({ x: p.x, y: p.y, wd: p.wd, role: p.role })),
+      labels: this.milestones.map((m) => ({ m: m.m, ...m.label })),
+      lod: this.dayStep > 0 ? Math.round(this.step / this.dayStep) : 1,
+    };
   }
 
   /** Marks user activity so the loop returns to full frame rate. */
@@ -492,23 +610,16 @@ export class Trail {
     this.random = rng(this.seed * 977);
     this.particles = [];
     if (this.dirty) {
-      if (!this.layout()) return;
-      this.paintSky();
-      this.paintRibbon();
-      this.auroraCache = null;
-      if (this.tier().min >= 100) this.paintAurora();
-      this.dirty = false;
+      if (!this.rebuild()) return;
     }
     this.progressShown = this.progressTarget;
     const dt = 1 / 30;
     const steps = Math.round(warmup / dt);
-    const reduced = this.reduced;
     this.t = time - warmup;
     for (let i = 0; i < steps; i++) {
       this.t += dt;
       this.draw(dt, i < steps - 1);
     }
-    this.reduced = reduced;
     this.random = Math.random;
   }
 
@@ -532,6 +643,16 @@ export class Trail {
     cancelAnimationFrame(this.raf);
   }
 
+  private rebuild(): boolean {
+    if (!this.layout()) return false;
+    this.paintSky();
+    this.paintRibbon();
+    this.auroraCache = null;
+    if (this.tier().min >= 100) this.paintAurora();
+    this.dirty = false;
+    return true;
+  }
+
   private frame(now: number): void {
     if (!this.running) return;
     this.raf = requestAnimationFrame(this.frame);
@@ -551,14 +672,8 @@ export class Trail {
     if (!this.data) return;
     const t0 = performance.now();
     if (this.dirty) {
-      if (this.layout()) {
-        this.paintSky();
-        this.paintRibbon();
-        this.auroraCache = null;
-        if (this.tier().min >= 100) this.paintAurora();
-        this.dirty = false;
-        this.stats.cacheMs = performance.now() - t0;
-      } else return;
+      if (this.rebuild()) this.stats.cacheMs = performance.now() - t0;
+      else return;
     }
     const t1 = performance.now();
     this.draw(dt);
@@ -573,23 +688,56 @@ export class Trail {
   /* ---------------- hover ---------------- */
 
   private hoverAt(x: number): void {
-    if (!this.pts.length) return;
+    if (!this.days.length) return;
     this.poke();
-    const first = this.pts[0]!;
-    const i = clamp(Math.round((x - first.x) / (this.step || 1)), 0, this.pts.length - 1);
-    this.setHover(this.pts[i]!);
+    const i = clamp(Math.round((x - this.dayX0) / (this.dayStep || 1)), 0, this.days.length - 1);
+    this.setHover(i);
   }
 
-  private setHover(p: Pt): TrailHover {
-    this.hover = p;
+  private dayX(i: number): number {
+    return i >= this.days.length - 1 ? this.head.x : this.dayX0 + i * this.dayStep;
+  }
+
+  /** Path centre y at any x (also inside gaps). */
+  private yAt(x: number): number {
+    return this.yAtPts(this.pts, x);
+  }
+
+  private yAtPts(P: Pt[], x: number): number {
+    if (!P.length) return this.h / 2;
+    if (x <= P[0]!.x) return P[0]!.y;
+    for (let i = 1; i < P.length; i++)
+      if (P[i]!.x >= x) {
+        const a = P[i - 1]!;
+        const b = P[i]!;
+        const t = (x - a.x) / (b.x - a.x || 1);
+        // cosine blend: smooth enough for a tooltip anchor
+        return lerp(a.y, b.y, (1 - Math.cos(t * Math.PI)) / 2);
+      }
+    return P[P.length - 1]!.y;
+  }
+
+  private runOfDay(i: number): RunInfo | undefined {
+    return this.runs.find((r) => i >= r.d0 && i <= (r.current ? this.days.length - 1 : r.d1));
+  }
+
+  private setHover(i: number): TrailHover {
+    this.hoverDay = i;
     this.kick();
-    const h: TrailHover = { day: p.day, index: p.i, x: p.x, y: p.y };
+    const x = this.dayX(i);
+    const run = this.runOfDay(i);
+    const day = this.days[i]!;
+    const h: TrailHover = { day, index: i, x, y: this.yAt(x) };
+    if (run && (day.goalMet || day.frozen || day.isToday)) {
+      const last = run.current ? this.days.length - 1 - (this.days[this.days.length - 1]!.goalMet ? 0 : 1) : run.d1;
+      h.run = { days: run.current ? this.data?.streak.current ?? run.days : run.days, from: this.days[run.d0]?.date ?? "", to: this.days[Math.max(run.d0, last)]?.date ?? "", current: run.current };
+    }
     this.hoverCb?.(h);
     return h;
   }
 
   private clearHover(): void {
-    this.hover = null;
+    this.hoverDay = null;
     this.hoverCb?.(null);
     this.kick();
   }
@@ -616,7 +764,7 @@ export class Trail {
     const k = Math.min(h / 200, w / 360) * (v.scale ?? 1);
     this.k = k;
     const hist = d.history.slice(-(v.maxDays - 1));
-    const today: TrailDay & { isToday: boolean } = {
+    const today: DayIn = {
       tokens: d.today.tokens,
       goalMet: d.goal > 0 && d.today.tokens >= d.goal,
       tools: d.today.tools,
@@ -625,155 +773,291 @@ export class Trail {
       date: d.today.date ?? "",
       goal: d.goal,
     };
-    const days: (TrailDay & { isToday?: boolean })[] = [...hist, today];
+    const days: DayIn[] = [...hist, today];
+    this.days = days;
     const n = days.length;
+    let acc = 0;
+    this.cum = days.map((q) => (acc += q.isToday ? 0 : q.tokens));
     const lastNum = dayNumber(hist.length ? hist[hist.length - 1]!.date : null, 20000) + 1;
     let x0 = w * v.left;
     const x1 = n === 1 ? w * (v.soloX ?? 0.5) : w * v.headX;
-    let step = n > 1 ? (x1 - x0) / (n - 1) : 0;
-    const maxStep = 34 * k;
-    if (step > maxStep) {
-      step = maxStep;
-      x0 = x1 - step * (n - 1);
+    let dayStep = n > 1 ? (x1 - x0) / (n - 1) : 0;
+    const maxStep = (v.maxStep ?? 34) * k;
+    if (dayStep > maxStep) {
+      dayStep = maxStep;
+      x0 = x1 - dayStep * (n - 1);
     }
+    this.dayStep = dayStep;
+    this.dayX0 = x0;
+
+    // level of detail: aggregate days so points stay >= 3 px apart
+    const lod = n > 2 ? lodBucket(dayStep, 3) : 1;
+    const B = bucketDays(days, goal, lod);
+    const m = B.length;
+    const step = dayStep * lod;
     this.step = step;
-    // smoothed activity (EMA both ways) for the "soar"
-    const ratio = days.map((q) => clamp(q.tokens / goal, 0, 2.5));
-    const ema = ratio.slice();
-    const al = v.smooth ?? clamp(12 / n, 0.07, 0.3);
-    {
-      const m = Math.min(n, 14);
-      let sum = 0;
-      for (let i = 0; i < m; i++) sum += ratio[i]!;
-      ema[0] = sum / m;
-    }
-    for (let i = 1; i < n; i++) ema[i] = lerp(ema[i - 1]!, ratio[i]!, al);
-    // zero-phase: a backward EMA over the forward one, so busy days lift the
-    // path smoothly instead of kinking it day by day
-    for (let i = n - 2; i >= 0; i--) ema[i] = lerp(ema[i + 1]!, ema[i]!, al * 1.4);
-    const top = v.top ?? 0.16;
-    const bottom = v.bottom ?? 0.84;
-    const pts: Pt[] = days.map((q, i) => {
-      const num = lastNum - (n - 1 - i);
-      const fq = v.freq ?? clamp(50 / n, 0.2, 1);
+    const px = B.map((b, i) => (i === m - 1 ? x1 : x0 + ((b.i0 + b.i1) / 2) * dayStep));
+    const { roles, runs } = classify(B, { minPastRun: 3, bridgeGaps: Math.floor(5 / Math.max(0.5, step)) });
+    this.runs = runs;
+
+    // natural centre line: a slow wander seeded by the date, lifted by busy stretches
+    const period = wanderPeriod(dayStep);
+    const TAU = Math.PI * 2;
+    const act = gaussian(
+      B.map((b) => b.ratio),
+      clamp(22 / Math.max(0.5, step), 1.2, 24),
+    );
+    const natural = B.map((b, i) => {
+      const num = lastNum - (n - 1 - (b.i0 + b.i1) / 2);
       const noise =
-        Math.sin(num * 0.23 * fq + this.seed) * 0.5 +
-        Math.sin(num * 0.061 * fq + this.seed * 2.1) * 0.4 +
-        hash(num) * 0.06 * fq;
-      let y = h * v.baseY + noise * v.amp * h - (ema[i]! - 0.9) * v.rise * h;
-      y = clamp(y, h * top, h * bottom);
-      const kind: Kind = q.isToday ? "today" : q.goalMet ? "lit" : q.frozen ? "frozen" : q.tokens > 0 ? "wisp" : "dark";
-      const wd = (v.wMin + Math.pow(clamp(ratio[i]!, 0, 2.5) / 2.5, 0.7) * (v.wMax - v.wMin)) * k * T.wMul;
-      return {
-        x: x1 - (n - 1 - i) * step,
-        y,
-        kind,
-        wd: kind === "frozen" ? v.wMin * k * 1.4 : wd,
-        col: kind === "frozen" ? FROZEN_COL : toolColor(T, Object.keys(q.tools ?? {}).length ? q.tools : { claude: 1 }),
-        tools: q.tools ?? {},
-        cache: q.cacheShare || 0,
-        day: q,
-        i,
-      };
+        Math.sin((num / period) * TAU + this.seed) * 0.6 +
+        Math.sin((num / (period * 0.5)) * TAU + this.seed * 2.1) * 0.22 +
+        Math.sin((num / (period * 2.2)) * TAU + this.seed * 0.7) * 0.3;
+      return h * v.baseY + noise * v.amp * h - (clamp(act[i]!, 0, 2.2) - 0.9) * v.rise * h;
     });
-    // dense layouts: relax y a little more so a year reads as one sweep
-    if (step < 8) {
-      for (let pass = 0; pass < (step < 4 ? 3 : 2); pass++) {
-        const ys = pts.map((p) => p.y);
-        for (let i = 1; i < n - 1; i++) pts[i]!.y = ys[i - 1]! * 0.25 + ys[i]! * 0.5 + ys[i + 1]! * 0.25;
-      }
-    }
-    const passes = step < 4 ? 6 : step < 8 ? 3 : 2;
-    for (let pass = 0; pass < passes; pass++) {
-      const ws = pts.map((p) => p.wd);
-      for (let i = 1; i < n - 1; i++)
-        if (pts[i]!.kind === "lit" && pts[i - 1]!.kind === "lit") pts[i]!.wd = ws[i - 1]! * 0.25 + ws[i]! * 0.5 + ws[i + 1]! * 0.25;
-    }
-    // Catmull-Rom sampling for gentle curves
-    const S = step > 14 ? 8 : step > 5 ? 4 : 2;
-    const samples: Sample[] = [];
-    for (let i = 0; i < n - 1; i++) {
-      const p0 = pts[Math.max(0, i - 1)]!;
-      const p1 = pts[i]!;
-      const p2 = pts[i + 1]!;
-      const p3 = pts[Math.min(n - 1, i + 2)]!;
-      for (let s = 0; s < S; s++) {
-        const t = s / S;
-        const t2 = t * t;
-        const t3 = t2 * t;
-        const y =
-          0.5 *
-          (2 * p1.y +
-            (-p0.y + p2.y) * t +
-            (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
-            (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3);
-        samples.push({
-          x: lerp(p1.x, p2.x, t),
-          y,
-          seg: i + 1,
-          wd: lerp(p1.wd, p2.wd, t),
-          col: mixRGB(p1.col, p2.col, t),
-          cache: lerp(p1.cache, p2.cache, t),
-          sh: TOOLS.map((tk) => lerp(p1.tools[tk] ?? 0, p2.tools[tk] ?? 0, t)),
-          nx: 0,
-          ny: 0,
+
+    // width and intensity per point, by role
+    const wMin = v.wMin * k;
+    const wMax = v.wMax * k;
+    const floor = Math.max(1.5, wMin * 0.9);
+    const shape = (r: number) => 0.78 * Math.pow(Math.min(r, 1), 0.8) + 0.22 * clamp((r - 1) / 1.5, 0, 1);
+    const ribbonW = (r: number) => wMin + (wMax - wMin) * shape(r);
+    const wd = B.map((b, i) => {
+      const role = roles[i]!;
+      if (role === "gap") return 0;
+      if (role === "bridge") return Math.max(1.2, wMin * 0.8);
+      if (role === "filament") return floor + (wMax * 0.42 - floor) * Math.pow(Math.min(b.ratio, 1), 1.1);
+      return ribbonW(b.ratio);
+    });
+    const prevRole = m > 1 ? roles[m - 2] : "gap";
+    const todayOnRun = B[m - 1]!.ratio >= 1 || prevRole === "current" || prevRole === "bridge";
+    const al = B.map((b, i) => {
+      const role = roles[i]!;
+      if (role === "today") return todayOnRun ? 1 : T.filA[0] + (1 - T.filA[0]) * Math.min(b.ratio, 1);
+      if (role === "current") return 1;
+      if (role === "past") return T.pastDim;
+      if (role === "bridge") return 0.62;
+      if (role === "filament") return T.filA[0] + T.filA[1] * Math.min(b.ratio, 1);
+      return 0;
+    });
+    const cool = roles.map((r) => (r === "past" ? T.afterAmt : r === "filament" ? T.afterAmt * 0.6 : 0));
+    const u = roles.map(() => 0.5);
+    for (const r of runs) {
+      const end = r.current ? m - 1 : r.b;
+      for (let q = r.a; q <= end; q++) u[q] = end > r.a ? (q - r.a) / (end - r.a) : 1;
+      // the start of the current run fades in over its first days: no overexposed blob
+      if (r.current && lod === 1 && end - r.a >= 3) {
+        [0.42, 0.7, 0.9].forEach((f, j) => {
+          if (r.a + j < end) {
+            wd[r.a + j]! *= f;
+            al[r.a + j] = al[r.a + j]! * (0.3 + 0.7 * f);
+          }
         });
       }
     }
-    const L = pts[n - 1]!;
-    samples.push({ x: L.x, y: L.y, seg: n - 1, wd: L.wd, col: L.col, cache: L.cache, sh: TOOLS.map((tk) => L.tools[tk] ?? 0), nx: 0, ny: 0 });
-    for (let j = 0; j < samples.length; j++) {
-      const a = samples[Math.max(0, j - 1)]!;
-      const b = samples[Math.min(samples.length - 1, j + 1)]!;
+    u[m - 1] = 1;
+    const mask = roles.map((r) => r !== "gap");
+    const sig = clamp(9 / Math.max(0.5, step), 0.7, 4);
+    // history swells gently (wider smoothing); the current run keeps its day-to-day shape
+    const sigPast = clamp(20 / Math.max(0.5, step), 1, 7);
+    const wdCur = gaussian(wd, sig, mask);
+    const wdPast = gaussian(wd, sigPast, mask);
+    const wdS = gaussian(
+      wd.map((_, i) => (roles[i] === "current" || roles[i] === "today" ? wdCur[i]! : wdPast[i]!)),
+      0.8,
+      mask,
+    );
+    const alS = gaussian(al, Math.max(sig, sigPast * 0.6), mask);
+    const coolS = gaussian(cool, sig, mask);
+    // today is drawn live from progress; keep its raw values
+    wdS[m - 1] = Math.max(1.5, wd[m - 1]!);
+    alS[m - 1] = al[m - 1]!;
+    this.bakedProgress = B[m - 1]!.ratio;
+
+    // route the centre line around the HUD
+    const headR = v.headR * k;
+    const half = wdS.map((x, i) => (i === m - 1 ? headR * 1.35 : x * T.bodyMul * 0.5 + (roles[i] === "gap" ? 3 : 0)));
+    const rects = [...(v.avoid ?? []), ...this.avoid];
+    const ys = routeY(px, natural, half, rects, { top: h * (v.top ?? 0.12), bottom: h * (v.bottom ?? 0.86), margin: 6 + 4 * k, ramp: 64 * Math.max(0.8, k * 0.8) });
+
+    const pts: Pt[] = B.map((b, i) => {
+      const role = roles[i]!;
+      const col = role === "bridge" ? FROZEN_COL : toolColor(T, Object.keys(b.tools ?? {}).length ? b.tools : { claude: 1 });
+      return { x: px[i]!, y: ys[i]!, wd: wdS[i]!, a: alS[i]!, cool: coolS[i]!, u: u[i]!, col, tools: b.tools ?? {}, cache: b.cache, role, b };
+    });
+    this.pts = pts;
+    this.head = { x: pts[m - 1]!.x, y: pts[m - 1]!.y };
+
+    // pieces: contiguous stretches of non-gap points, sampled with Catmull-Rom
+    const S = step > 14 ? 8 : step > 5 ? 4 : step > 2.5 ? 2 : 1;
+    this.S = S;
+    const samples: Sample[] = [];
+    const pieces: Piece[] = [];
+    const sparks: Pt[] = [];
+    const mk = (p1: Pt, p2: Pt, t: number, y: number, seg: number): Sample => ({
+      x: lerp(p1.x, p2.x, t),
+      y,
+      seg,
+      wd: lerp(p1.wd, p2.wd, t),
+      a: lerp(p1.a, p2.a, t),
+      cool: lerp(p1.cool, p2.cool, t),
+      u: lerp(p1.u, p2.u, t),
+      col: mixRGB(p1.col, p2.col, t),
+      cache: lerp(p1.cache, p2.cache, t),
+      sh: TOOLS.map((tk) => lerp(p1.tools[tk] ?? 0, p2.tools[tk] ?? 0, t)),
+      nx: 0,
+      ny: 0,
+    });
+    let i = 0;
+    while (i < m) {
+      if (roles[i] === "gap") {
+        i++;
+        continue;
+      }
+      let j = i;
+      while (j + 1 < m && roles[j + 1] !== "gap") j++;
+      if (j === i) {
+        sparks.push(pts[i]!);
+        i = j + 1;
+        continue;
+      }
+      const s0 = samples.length;
+      for (let q = i; q < j; q++) {
+        const p0 = pts[Math.max(i, q - 1)]!;
+        const p1 = pts[q]!;
+        const p2 = pts[q + 1]!;
+        const p3 = pts[Math.min(j, q + 2)]!;
+        for (let s = 0; s < S; s++) {
+          const t = s / S;
+          const t2 = t * t;
+          const t3 = t2 * t;
+          const y = 0.5 * (2 * p1.y + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3);
+          samples.push(mk(p1, p2, t, y, q));
+        }
+      }
+      samples.push(mk(pts[j]!, pts[j]!, 0, pts[j]!.y, j));
+      const piece: Piece = { p0: i, p1: j, s0, s1: samples.length - 1, head: j === m - 1 };
+      pieces.push(piece);
+      // soft ends: brush-like taper in and out (never a flat cap)
+      const xs0 = samples[s0]!.x;
+      const xs1 = samples[piece.s1]!.x;
+      const tIn = clamp(step * 0.9, 6, 30);
+      const tOut = clamp(step * 1.1, 8, 36);
+      for (let q = s0; q <= piece.s1; q++) {
+        const s = samples[q]!;
+        const fi = smoothstep(0, tIn, s.x - xs0);
+        const fo = piece.head ? 1 : smoothstep(0, tOut, xs1 - s.x);
+        s.wd *= Math.min(0.14 + 0.86 * fi, 0.12 + 0.88 * fo);
+        s.a *= Math.min(0.4 + 0.6 * fi, 0.35 + 0.65 * fo);
+        // the body narrows into the head orb, so a big day never ends in a flat cap
+        if (piece.head) s.wd *= 1 - 0.55 * smoothstep(xs1 - step * 0.55, xs1, s.x);
+      }
+      i = j + 1;
+    }
+    // today alone after a gap: a short lead-in so the head still has a tail
+    if (m > 1 && sparks.length && sparks[sparks.length - 1] === pts[m - 1]) {
+      sparks.pop();
+      const hd = pts[m - 1]!;
+      const len = Math.min(Math.max(step, 12) * 0.9, 34 * k);
+      const s0 = samples.length;
+      for (let q = 0; q <= 8; q++) {
+        const f = q / 8;
+        const x = hd.x - len * (1 - f);
+        const smp = mk(hd, hd, 0, 0, m - 1);
+        smp.x = x;
+        smp.y = this.yAtPts(pts, x);
+        smp.wd = hd.wd * Math.min(1, f * 1.3 + 0.08) * (1 - 0.5 * smoothstep(0.6, 1, f));
+        smp.a = hd.a * (0.3 + 0.7 * f);
+        samples.push(smp);
+      }
+      pieces.push({ p0: m - 1, p1: m - 1, s0, s1: samples.length - 1, head: true });
+    }
+    for (let q = 0; q < samples.length; q++) {
+      const a = samples[Math.max(0, q - 1)]!;
+      const b = samples[Math.min(samples.length - 1, q + 1)]!;
       const nx = -(b.y - a.y);
       const ny = b.x - a.x;
       const len = Math.hypot(nx, ny) || 1;
-      samples[j]!.nx = nx / len;
-      samples[j]!.ny = ny / len;
+      samples[q]!.nx = nx / len;
+      samples[q]!.ny = ny / len;
     }
-    this.pts = pts;
     this.samples = samples;
-    this.S = S;
-    // runs: consecutive segments whose destination day is lit (or today, attached to a lit run)
-    const runs: Run[] = [];
-    let cur: Run | null = null;
-    const prevLit = n > 1 && (pts[n - 2]!.kind === "lit" || pts[n - 2]!.kind === "frozen");
-    for (let j = 1; j < samples.length; j++) {
-      const kind = pts[samples[j]!.seg]!.kind;
-      const litLike = kind === "lit" || kind === "frozen" || (kind === "today" && (L.day.goalMet || prevLit));
-      if (litLike) {
-        if (!cur) {
-          cur = { a: j - 1, b: j, current: false, startDay: 0 };
-          runs.push(cur);
-        } else cur.b = j;
-      } else cur = null;
+    this.pieces = pieces;
+    this.sparks = sparks;
+    const hp = pieces.find((p) => p.head);
+    this.cacheEnd = hp ? hp.s1 : -1;
+
+    // the current run, in samples
+    this.curRun = null;
+    const cr = runs.find((r) => r.current);
+    if (cr && hp && cr.a >= hp.p0) {
+      const s0 = samples.findIndex((s, q) => q >= hp.s0 && s.seg >= cr.a);
+      if (s0 >= 0) this.curRun = { s0, s1: hp.s1, p0: cr.a, p1: m - 1, days: cr.days };
     }
+
+    // embers: one where each run ended, one in each gap
+    const embers: Ember[] = [];
+    const er = rng(this.seed * 53);
     for (const r of runs) {
-      r.current = r.b >= samples.length - 1 - S;
-      r.startDay = samples[r.a]!.seg;
+      if (r.current || roles[r.a] !== "past" || (step < 6 && r.days < 7)) continue;
+      const p = pts[r.b]!;
+      for (let e = 0; e < 3; e++) embers.push({ x: p.x + (er() * 0.8 + 0.2) * 7 * k, y: p.y + (2 + er() * 8) * k * (e + 1) * 0.6, r: (0.8 + er() * 0.9) * k * (1 - e * 0.2), a: 0.9 - e * 0.25 });
     }
-    this.runs = runs;
-    this.head = { x: L.x, y: L.y };
-    // milestone stars along the current run
+    for (let q = 1; q < m - 1; q++) {
+      if (roles[q] !== "gap" || roles[q - 1] === "gap") continue;
+      let e = q;
+      while (e + 1 < m && roles[e + 1] === "gap") e++;
+      const gx0 = pts[q - 1]!.x;
+      const gx1 = pts[Math.min(m - 1, e + 1)]!.x;
+      if (gx1 - gx0 < (step < 6 ? 16 : 10)) continue;
+      const gx = lerp(gx0, gx1, 0.5);
+      embers.push({ x: gx, y: this.yAt(gx) + 3 * k, r: 1.1 * k, a: 0.75 });
+    }
+    // dense layouts: keep the sky calm
+    const cap = step < 6 ? 28 : 60;
+    this.embers = embers.length > cap ? embers.filter((_, q) => q % Math.ceil(embers.length / cap) === 0) : embers;
+
+    // milestone stars along the current run, labels placed without collisions
     this.milestones = [];
-    const curRun = runs.find((r) => r.current);
     const streak = d.streak.current;
-    if (curRun)
-      for (const m of MILESTONES) {
-        if (streak >= m) {
-          const dayIdx = n - 1 - (streak - m) - (L.day.goalMet ? 0 : 1);
-          const p = pts[dayIdx];
-          if (p && dayIdx > 0) this.milestones.push({ m, x: p.x, y: p.y - p.wd * 1.2 - 10 * k });
-        }
+    if (cr) {
+      const pre: Omit<Milestone, "label">[] = [];
+      for (const ms of MILESTONES) {
+        if (streak < ms) continue;
+        const dayIdx = n - 1 - (streak - ms) - (today.goalMet ? 0 : 1);
+        if (dayIdx <= 0 || dayIdx >= n) continue;
+        const x = this.dayX(dayIdx);
+        const s = this.sampleAtX(x);
+        const ry = s ? s.y : this.yAt(x);
+        const wdAt = s ? s.wd : wMin;
+        pre.push({ m: ms, x, y: ry - wdAt * 1.1 - 10 * k, ry });
       }
+      const fs = Math.round(10 * Math.max(1, k * 0.8));
+      const ctx = this.ctx;
+      ctx.font = `500 ${fs}px "Geist Variable", Geist, system-ui`;
+      const lbl = placeLabels(
+        pre.map((p) => {
+          const tw = ctx.measureText(`${p.m} days`).width + 6;
+          const s = (5 + 1.5) * k;
+          const cy = p.y - s - 4 - fs / 2;
+          // above the star, else beside it (never far below: the label must read as the star's)
+          return { x: p.x, y: cy, alts: [{ x: p.x - s - 6 - tw / 2, y: p.y }, { x: p.x + s + 6 + tw / 2, y: p.y }], w: tw, h: fs + 4, priority: p.m };
+        }),
+        v.labels ? rects : [],
+        { w, h },
+        56,
+      );
+      this.milestones = pre.map((p, q) => ({ ...p, label: v.labels ? lbl[q]! : { visible: false, x: p.x, y: p.y } }));
+    }
+
     // stars
     const r = rng(this.seed * 131);
     this.stars = [];
     const tier = this.tier();
     const count = Math.round(((T.starCount * (w * h)) / (360 * 200)) * (tier.min >= 30 ? 1.5 : 1));
-    for (let i = 0; i < Math.min(count, 260); i++)
+    for (let q = 0; q < Math.min(count, 260); q++)
       this.stars.push({ x: r() * w, y: Math.pow(r(), 1.6) * h * 0.62, s: 0.5 + r() * 1.2, ph: r() * 6.28, sp: 0.6 + r() * 1.6 });
-    if (this.hover) this.hover = this.pts[clamp(this.hover.i, 0, this.pts.length - 1)] ?? null;
+    if (this.hoverDay !== null) this.hoverDay = clamp(this.hoverDay, 0, n - 1);
     return true;
   }
 
@@ -822,37 +1106,20 @@ export class Trail {
     }
   }
 
+  /** Spans of samples drawn into the cache (today's live segment excluded). */
+  private spans(): { s0: number; s1: number }[] {
+    return this.pieces.map((p) => ({ s0: p.s0, s1: p.head ? this.cacheEnd : p.s1 })).filter((s) => s.s1 - s.s0 >= 1);
+  }
+
   private paintRibbon(): void {
     const c = this.cache.getContext("2d")!;
     const T = this.theme;
-    const S = this.samples;
     const k = this.k;
     c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     c.clearRect(0, 0, this.w, this.h);
     c.globalCompositeOperation = T.blend;
-    c.lineCap = "round";
-    c.lineJoin = "round";
-    const n = this.pts.length;
-    const last = S.length - 1;
-    // wisps (usage below goal) and frozen bridges
-    for (let j = 1; j < S.length; j++) {
-      const kind = this.pts[S[j]!.seg]!.kind;
-      if (kind !== "wisp" && kind !== "frozen") continue;
-      if (S[j]!.seg === n - 1) continue;
-      if (kind === "frozen" && this.runs.some((r) => j > r.a && j <= r.b)) continue;
-      c.strokeStyle = rgba(S[j]!.col, kind === "wisp" ? T.wisp : 0.7);
-      c.lineWidth = Math.max(1, 1.2 * k);
-      c.setLineDash(kind === "frozen" ? [2 * k, 4 * k] : []);
-      c.beginPath();
-      c.moveTo(S[j - 1]!.x, S[j - 1]!.y);
-      c.lineTo(S[j]!.x, S[j]!.y);
-      c.stroke();
-    }
-    c.setLineDash([]);
-    const spans = this.runs
-      .map((run) => ({ run, dim: run.current ? 1 : T.pastDim, end: Math.min(run.b, last - (run.current ? this.S : 0)) }))
-      .filter((x) => x.end - x.run.a >= 1);
-    // glow on a quarter-resolution canvas: the blur is ~16x cheaper and looks the same upscaled
+    const spans = this.spans();
+    // bloom on a quarter-resolution canvas: the blur is ~16x cheaper and looks the same upscaled
     const q = this.dpr * 0.25;
     const gc = this.glowCache;
     gc.width = Math.max(1, Math.round(this.w * q));
@@ -861,43 +1128,96 @@ export class Trail {
     g.setTransform(q, 0, 0, q, 0, 0);
     g.clearRect(0, 0, this.w, this.h);
     g.globalCompositeOperation = T.blend;
-    for (const x of spans) this.ribbonLayers(g, x.run.a, x.end, x.dim, x.run.current, "glow", q);
+    for (const s of spans) this.band(g, s.s0, s.s1, "glow");
+    for (const p of this.sparks) this.sparkDot(g, p, 3.2);
     // Blur by compositing with an identity transform: filter radii then mean
     // device pixels in every engine (WebKit scales them by the transform).
     c.drawImage(this.blurInto(this.blurCache, gc, 8 * k * q), 0, 0, this.w, this.h);
     if (T.shadow) {
-      // one blurred, offset silhouette of every run, at half resolution
       const q2 = this.dpr * 0.5;
       const sc = this.shadowCache;
       sc.width = Math.max(1, Math.round(this.w * q2));
       sc.height = Math.max(1, Math.round(this.h * q2));
       const sx = sc.getContext("2d")!;
-      sx.setTransform(q2, 0, 0, q2, 0, 3.2 * k * q2);
+      sx.setTransform(q2, 0, 0, q2, 0, 3.4 * k * q2);
       sx.clearRect(0, -10, this.w, this.h + 10);
-      for (const x of spans) this.ribbonLayers(sx, x.run.a, x.end, x.dim, x.run.current, "shadow", q2);
-      c.drawImage(this.blurInto(this.blurCache, sc, 3.5 * k * q2), 0, 0, this.w, this.h);
+      for (const s of spans) this.band(sx, s.s0, s.s1, "shadow");
+      c.save();
+      c.globalCompositeOperation = "source-over";
+      c.drawImage(this.blurInto(this.blurCache, sc, 4 * k * q2), 0, 0, this.w, this.h);
+      c.restore();
     }
-    // light theme: a thin darker rim gives the ribbon an edge on a pale sky
-    if (T.rim) for (const x of spans) this.ribbonLayers(c, x.run.a, x.end, x.dim, x.run.current, "rim", this.dpr);
-    // bodies: all runs crisp on one layer, then composite once with a light blur
+    // bodies: all pieces crisp on one layer, then composite once with a light blur
     const bc = this.bodyCache;
     bc.width = this.cache.width;
     bc.height = this.cache.height;
     const bctx = bc.getContext("2d")!;
     bctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     bctx.globalCompositeOperation = T.blend;
-    for (const x of spans) this.ribbonLayers(bctx, x.run.a, x.end, x.dim, x.run.current, "body", this.dpr);
+    for (const s of spans) this.band(bctx, s.s0, s.s1, "body");
+    for (const p of this.sparks) this.sparkDot(bctx, p, 1);
     c.save();
     c.setTransform(1, 0, 0, 1, 0, 0);
     if (filterBlurWorks() && T.bodyBlur * k * this.dpr >= 1) c.filter = `blur(${(T.bodyBlur * k * this.dpr).toFixed(1)}px)`;
     c.drawImage(bc, 0, 0);
     c.restore();
-    if (T.inner > 0) for (const x of spans) this.ribbonLayers(c, x.run.a, x.end, x.dim, x.run.current, "inner", this.dpr);
-    for (const x of spans) {
-      this.ribbonLayers(c, x.run.a, x.end, x.dim, x.run.current, "core", this.dpr);
-      if (!x.run.current) this.embers(c, S[x.end]!, x.dim);
+    for (const s of spans) this.band(c, s.s0, s.s1, "core");
+    // afterglow strands on past ribbons (static; only the current run's strands are live)
+    for (const r of this.runs) {
+      if (r.current) continue;
+      const sp = this.runSamples(r);
+      if (sp) this.strandPaths(c, sp.s0, sp.s1, 0, T.pastDim * 0.7, false);
+    }
+    for (const e of this.embers) {
+      const eg = c.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.r * 4);
+      eg.addColorStop(0, rgba(T.ember, e.a * (this.themeName === "dark" ? 0.9 : 0.8)));
+      eg.addColorStop(0.25, rgba(T.ember, e.a * 0.35));
+      eg.addColorStop(1, rgba(T.ember, 0));
+      c.fillStyle = eg;
+      c.beginPath();
+      c.arc(e.x, e.y, e.r * 4, 0, 7);
+      c.fill();
+    }
+    // a soft 40% mask under the HUD, in case the route had no room
+    const rects = [...(this.v.avoid ?? []), ...this.avoid];
+    if (rects.length) {
+      c.globalCompositeOperation = "destination-out";
+      for (const r of rects)
+        for (let s = 0; s < 4; s++) {
+          const inset = 12 - s * 5;
+          c.fillStyle = "rgba(0,0,0,0.11)";
+          c.beginPath();
+          c.roundRect(r.x - inset, r.y - inset, r.w + inset * 2, r.h + inset * 2, 10 + inset);
+          c.fill();
+        }
     }
     c.globalCompositeOperation = "source-over";
+  }
+
+  private runSamples(r: RunInfo): { s0: number; s1: number } | null {
+    const piece = this.pieces.find((p) => r.a >= p.p0 && r.b <= p.p1);
+    if (!piece) return null;
+    let s0 = -1;
+    let s1 = -1;
+    for (let q = piece.s0; q <= piece.s1; q++) {
+      const seg = this.samples[q]!.seg;
+      if (seg >= r.a && s0 < 0) s0 = q;
+      if (seg <= r.b) s1 = q;
+    }
+    if (piece.head) s1 = Math.min(s1, this.cacheEnd);
+    return s0 >= 0 && s1 - s0 >= 2 ? { s0, s1 } : null;
+  }
+
+  private sparkDot(c: Ctx, p: Pt, mul: number): void {
+    const T = this.theme;
+    const r = Math.max(1.2, p.wd * 0.5) * mul;
+    const g = c.createRadialGradient(p.x, p.y, 0, p.x, p.y, r * 1.6);
+    g.addColorStop(0, rgba(this.themeName === "dark" ? T.core : p.col, p.a * (mul > 1 ? T.glowA : 0.9)));
+    g.addColorStop(1, rgba(p.col, 0));
+    c.fillStyle = g;
+    c.beginPath();
+    c.arc(p.x, p.y, r * 1.6, 0, 7);
+    c.fill();
   }
 
   /** Draws `src` into `dst` (same pixel size) through a device-pixel blur. */
@@ -918,100 +1238,64 @@ export class Trail {
     return dst;
   }
 
-  private ribbonLayers(c: Ctx, a: number, b: number, dim: number, current: boolean, mode: "glow" | "body" | "core" | "rim" | "inner" | "shadow", _scale: number): void {
+  private colorFor(s: Sample, mode: "glow" | "body" | "core"): RGB {
     const T = this.theme;
-    const S = this.samples;
-    const k = this.k;
-    const grad = (alpha: number, kind: "core" | "glow" | "body" | "rim" | "inner") => {
-      const g = c.createLinearGradient(S[a]!.x, 0, S[b]!.x, 0);
-      const span = S[b]!.x - S[a]!.x || 1;
-      const every = Math.max(1, Math.floor((b - a) / 40));
-      for (let j = a; j <= b; j += every) {
-        const s = S[j]!;
-        let col: RGB;
-        if (kind === "core") col = mixRGB(T.core, T.coolCore, clamp((s.cache - 0.4) / 0.5, 0, 1));
-        else if (kind === "glow" && T.glowTint) col = mixRGB(s.col, T.glowTint, T.glowTintAmt);
-        else if (kind === "rim" && T.rim) col = mixRGB(s.col, T.rim, 0.6);
-        else if (kind === "inner") col = mixRGB(s.col, T.innerTint, 0.55);
-        else col = s.col;
-        g.addColorStop(clamp((s.x - S[a]!.x) / span, 0, 1), rgba(col, alpha * dim));
-      }
-      return g;
-    };
-    // taper measured in pixels, so short runs in dense layouts become slim wisps instead of spikes
-    const taper = (j: number) => {
-      const s = S[j]!;
-      const dIn = s.x - S[a]!.x;
-      const dOut = S[b]!.x - s.x;
-      const w = Math.max(1, s.wd);
-      return Math.min(1, dIn / (w * 1.6) + 0.12, current ? 1 : dOut / (w * 1.1) + 0.12);
-    };
-    const poly = (mul: number, pad = 0) => {
-      c.beginPath();
-      for (let j = a; j <= b; j++) {
-        const s = S[j]!;
-        const hw = s.wd * mul * taper(j) * 0.5 + pad;
-        if (j === a) c.moveTo(s.x + s.nx * hw, s.y + s.ny * hw);
-        else c.lineTo(s.x + s.nx * hw, s.y + s.ny * hw);
-      }
-      if (current) {
-        // round cap where the cached run meets today's live segment
-        const s = S[b]!;
-        const hw = s.wd * mul * taper(b) * 0.5 + pad;
-        const th = Math.atan2(s.ny, s.nx);
-        c.arc(s.x, s.y, hw, th, th - Math.PI, true);
-      }
-      for (let j = b; j >= a; j--) {
-        const s = S[j]!;
-        const hw = s.wd * mul * taper(j) * 0.5 + pad;
-        c.lineTo(s.x - s.nx * hw, s.y - s.ny * hw);
-      }
-      c.closePath();
-      c.fill();
-    };
-    if (mode === "glow") {
-      // blurred later, as one image (see paintRibbon)
-      c.fillStyle = grad(T.glowA, "glow");
-      poly(T.glowMul);
-      return;
-    }
-    if (mode === "rim") {
-      c.fillStyle = grad(T.rimA, "rim");
-      poly(T.bodyMul, Math.max(0.6, 0.7 * k));
-      return;
-    }
-    if (mode === "shadow") {
-      c.fillStyle = T.shadow ?? "transparent";
-      c.globalAlpha = dim;
-      poly(T.bodyMul * 0.9);
-      c.globalAlpha = 1;
-      return;
-    }
-    if (mode === "inner") {
-      c.fillStyle = grad(T.inner, "inner");
-      poly(T.bodyMul * 0.5);
-      return;
-    }
-    if (mode === "body") {
-      c.fillStyle = grad(T.bodyA, "body");
-      poly(T.bodyMul);
-      return;
-    }
-    c.fillStyle = grad(T.coreA, "core");
-    poly(T.coreW);
+    if (mode === "core") return mixRGB(T.core, T.coolCore, clamp((s.cache - 0.4) / 0.5, 0, 1));
+    let col = s.col;
+    if (T.ramp && mode === "body") col = mixRGB(col, mixRGB(T.ramp[0], T.ramp[1], s.u), T.rampAmt);
+    if (s.cool > 0) col = mixRGB(col, T.afterglow, s.cool);
+    if (mode === "glow" && T.glowTint) col = mixRGB(col, T.glowTint, T.glowTintAmt);
+    return col;
   }
 
-  private embers(c: Ctx, s: Sample, dim: number): void {
-    const r = rng(Math.round(s.x * 13));
-    // dense layouts have many broken runs: fewer, fainter embers so a year stays clean
-    const count = this.step < 4 ? 2 : this.step < 8 ? 4 : 6;
-    const a = this.themeName === "dark" ? 0.55 : 0.4;
-    for (let i = 0; i < count; i++) {
-      c.fillStyle = rgba(this.theme.tool.claude, a * dim * (1 - i / 7));
-      c.beginPath();
-      c.arc(s.x + (r() - 0.3) * 10 * this.k, s.y + r() * 16 * this.k, (0.6 + r() * 1.2) * this.k, 0, 7);
-      c.fill();
+  /** One filled band along samples s0..s1 with per-sample width and alpha. */
+  private band(c: Ctx, s0: number, s1: number, mode: "glow" | "body" | "core" | "shadow", arr?: Sample[]): void {
+    const T = this.theme;
+    const S = arr ?? this.samples;
+    const mul = mode === "glow" ? T.glowMul : mode === "core" ? T.coreW : mode === "shadow" ? T.bodyMul * 0.92 : T.bodyMul;
+    const minHalf = mode === "core" ? 0.35 : 0;
+    const dark = this.themeName === "dark";
+    const alphaOf = (s: Sample) => {
+      if (mode === "glow") return T.glowA * Math.pow(s.a, 1.15);
+      if (mode === "body") return T.bodyA * s.a;
+      if (mode === "shadow") return s.a;
+      // core: a lit, whiter centre that fades faster than the body on dim days;
+      // on very wide ribbons in dark it is held back so additive light never blows out
+      const damp = dark ? Math.min(1, Math.pow((9 * this.k) / Math.max(1, s.wd), 0.35)) : 1;
+      return T.coreA * Math.pow(s.a, 1.7) * damp;
+    };
+    if (mode === "shadow") {
+      c.fillStyle = T.shadow ?? "transparent";
+    } else {
+      const g = c.createLinearGradient(S[s0]!.x, 0, S[s1]!.x, 0);
+      const span = S[s1]!.x - S[s0]!.x || 1;
+      const every = Math.max(1, Math.floor((s1 - s0) / 120));
+      for (let j = s0; j <= s1; j += every) {
+        const s = S[j]!;
+        g.addColorStop(clamp((s.x - S[s0]!.x) / span, 0, 1), rgba(this.colorFor(s, mode), alphaOf(s)));
+      }
+      const e = S[s1]!;
+      g.addColorStop(1, rgba(this.colorFor(e, mode), alphaOf(e)));
+      c.fillStyle = g;
     }
+    c.beginPath();
+    for (let j = s0; j <= s1; j++) {
+      const s = S[j]!;
+      const hw = Math.max(minHalf, s.wd * mul * 0.5);
+      if (j === s0) c.moveTo(s.x + s.nx * hw, s.y + s.ny * hw);
+      else c.lineTo(s.x + s.nx * hw, s.y + s.ny * hw);
+    }
+    for (let j = s1; j >= s0; j--) {
+      const s = S[j]!;
+      const hw = Math.max(minHalf, s.wd * mul * 0.5);
+      c.lineTo(s.x - s.nx * hw, s.y - s.ny * hw);
+    }
+    c.closePath();
+    if (mode === "shadow") {
+      c.globalAlpha = 0.9;
+      c.fill();
+      c.globalAlpha = 1;
+    } else c.fill();
   }
 
   /* ---------------- live layers ---------------- */
@@ -1028,235 +1312,322 @@ export class Trail {
     const tier = this.tier();
     this.progressShown += (this.progressTarget - this.progressShown) * Math.min(1, dt * 3.2);
     const prog = this.progressShown;
+    const revealP = this.revealing ? clamp((this.t - this.revealAt) / REVEAL_SECONDS, 0, 1) : 1;
     if (simulateOnly) {
-      this.headSparks(prog, t, tier);
+      this.headSparks(prog, revealP);
       this.stepParticles(dt);
       return;
     }
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.clearRect(0, 0, c.canvas.width, c.canvas.height);
     const ce = this.celebrateAt >= 0 ? this.t - this.celebrateAt : -1;
-    const pulse = ce >= 0 && ce < 0.6 && !this.reduced ? 1 + Math.sin((ce / 0.6) * Math.PI) * 0.012 : 1;
-    c.setTransform(this.dpr * pulse, 0, 0, this.dpr * pulse, (1 - pulse) * w * this.dpr * 0.5, (1 - pulse) * h * this.dpr * 0.5);
+    const celebrating = ce >= 0 && ce < 3 && !this.reduced;
+    const pulse = celebrating && ce < 0.7 ? 1 + Math.sin((ce / 0.7) * Math.PI) * 0.014 : 1;
+    c.setTransform(this.dpr * pulse, 0, 0, this.dpr * pulse, (1 - pulse) * this.head.x * this.dpr, (1 - pulse) * this.head.y * this.dpr);
     c.drawImage(this.skyCache, 0, 0, w, h);
     // horizon warmth grows with today's progress; blooms after the goal
-    const warm = clamp(prog, 0, 1) * 0.5 + (prog >= 1 ? 0.25 : 0) + (ce >= 0 ? Math.max(0, 0.6 - ce * 0.25) : 0);
+    const warm = clamp(prog, 0, 1) * 0.5 + (prog >= 1 ? 0.25 : 0) + (ce >= 0 ? Math.max(0, 0.7 - ce * 0.3) : 0);
     const hg = c.createRadialGradient(this.head.x, h * 1.05, 0, this.head.x, h * 1.05, h * 1.1);
     hg.addColorStop(0, `${T.horizon}${((dark ? 0.45 : 0.5) * warm).toFixed(3)})`);
     hg.addColorStop(1, `${T.horizon}0)`);
     c.fillStyle = hg;
     c.fillRect(0, 0, w, h);
     if (tier.min >= 100) this.aurora(c, t);
-    const revealP = this.revealing ? clamp((this.t - this.revealAt) / 2.4, 0, 1) : 1;
-    if (this.revealing && revealP >= 1) this.revealing = false;
-    for (const s of this.stars) {
-      const tw = 0.35 + 0.65 * Math.abs(Math.sin(t * s.sp + s.ph));
-      c.fillStyle = `${T.star}${(tw * T.starA * revealP).toFixed(3)})`;
-      const yy = dark ? s.y : s.y + Math.sin(t * 0.3 + s.ph) * 4;
-      c.beginPath();
-      c.arc(s.x, yy, s.s * (dark ? 1 : 1.3), 0, 7);
-      c.fill();
+    if (this.revealing) {
+      if (revealP >= 1) this.revealing = false;
+      this.reportReveal(revealP);
     }
+    const twinkleBoost = celebrating && ce < 1.6 ? 1 + 0.8 * (1 - ce / 1.6) : 1;
+    // stars in four brightness groups: four fills per frame instead of one per star
+    const groups: Star[][] = [[], [], [], []];
+    for (const s of this.stars) groups[Math.min(3, Math.floor(Math.abs(Math.sin(t * s.sp + s.ph)) * 4))]!.push(s);
+    c.fillStyle = `${T.star}1)`;
+    groups.forEach((g, gi) => {
+      if (!g.length) return;
+      const tw = 0.35 + 0.65 * ((gi + 0.5) / 4);
+      c.globalAlpha = Math.min(1, tw * T.starA * revealP * twinkleBoost);
+      c.beginPath();
+      for (const s of g) {
+        const yy = dark ? s.y : s.y + Math.sin(s.ph) * 4;
+        const r = s.s * (dark ? 1 : 1.3);
+        c.moveTo(s.x + r, yy);
+        c.arc(s.x, yy, r, 0, 6.2832);
+      }
+      c.fill();
+    });
+    c.globalAlpha = 1;
     const first = this.pts[0]!;
     const revealX = revealP < 1 ? lerp(first.x - 20, this.head.x + 4, easeInOut(revealP)) : w + 10;
     c.save();
-    c.beginPath();
-    c.rect(0, 0, revealX, h);
-    c.clip();
+    if (revealP < 1) {
+      c.beginPath();
+      c.rect(0, 0, revealX, h);
+      c.clip();
+    }
     c.drawImage(this.cache, 0, 0, w, h);
     c.globalCompositeOperation = T.blend;
-    this.strands(c, t, revealX);
-    this.todaySegment(c, prog);
+    if (this.curRun && this.curRun.s1 - this.curRun.s0 >= 2 && this.samples[this.curRun.s0]!.x < revealX) this.strandPaths(c, this.curRun.s0, this.curRun.s1, t, 1, true);
     this.shimmer(c, t, ce);
+    if (celebrating) this.rollCall(c, ce);
     c.restore();
+    const fs = Math.round(10 * Math.max(1, k * 0.8));
     this.milestones.forEach((m, i) => {
       if (m.x > revealX) return;
-      this.sparkle(c, m.x, m.y, (5 + i * 1.5) * k, t * 0.6 + i, 0.9, v.labels ? m.m : null);
+      let s = (5 + i * 1.5) * k;
+      let a = 0.9;
+      // the roll call makes each milestone star flare as the flash passes it
+      const rc = this.rollCallEnvelope(m.x, ce);
+      if (rc > 0) {
+        s *= 1 + rc * 0.9;
+        a = Math.min(1, a + rc);
+      }
+      this.sparkle(c, m.x, m.y, s, t * 0.6 + i, a);
+      if (m.label.visible) this.label(c, `${m.m} days`, m.label.x, m.label.y, fs);
     });
     if (revealP >= 1) this.drawHead(c, prog, t, ce, tier);
     else if (revealP > 0.02) {
-      const s = this.sampleAtX(revealX);
-      if (s) this.glowDot(c, s.x, s.y, 10 * k, 0.9);
+      const y = this.yAt(revealX);
+      this.glowDot(c, revealX, y, 11 * k, 0.95);
+      this.glowDot(c, revealX, y, 4 * k, 1);
     }
-    this.headSparks(prog, t, tier);
+    this.headSparks(prog, revealP);
     this.stepParticles(dt);
     this.drawParticles(c);
-    if (ce >= 0 && ce < 1.2 && !this.reduced) {
-      const p = easeOutCubic(ce / 1.2);
-      c.strokeStyle = dark ? `rgba(255,236,210,${(0.7 * (1 - p)).toFixed(3)})` : `rgba(240,114,140,${(0.55 * (1 - p)).toFixed(3)})`;
-      c.lineWidth = 2.5 * k * (1 - p) + 0.5;
-      c.beginPath();
-      c.arc(this.head.x, this.head.y, v.headR * k * (1 + p * 7), 0, 7);
-      c.stroke();
+    if (celebrating && ce < 1.4) {
+      // shockwave: two rings racing well past the comet
+      const reach = Math.max(w, h) * 0.5;
+      for (const [delay, wmul] of [[0, 1], [0.14, 0.55]] as const) {
+        const e = ce - delay;
+        if (e < 0 || e > 1.2) continue;
+        const p = easeOutCubic(e / 1.2);
+        c.globalCompositeOperation = "source-over";
+        c.strokeStyle = dark ? rgba([255, 236, 210], 0.75 * (1 - p) * wmul) : rgba([226, 80, 116], 0.7 * (1 - p) * wmul);
+        c.lineWidth = (3 * k * (1 - p) + 0.6) * wmul;
+        c.beginPath();
+        c.arc(this.head.x, this.head.y, v.headR * k + p * reach, 0, 7);
+        c.stroke();
+      }
     }
-    if (this.hover) {
+    if (this.hoverDay !== null && this.days.length) {
+      const hx = this.dayX(this.hoverDay);
+      const hy = this.yAt(hx);
+      const gap = this.days[this.hoverDay]!.tokens <= 0 && !this.days[this.hoverDay]!.isToday;
       c.globalCompositeOperation = "source-over";
       c.strokeStyle = T.halo;
       c.lineWidth = 1;
       c.setLineDash([3, 4]);
       c.beginPath();
-      c.moveTo(this.hover.x, 0);
-      c.lineTo(this.hover.x, h);
+      c.moveTo(hx, 0);
+      c.lineTo(hx, h);
       c.stroke();
       c.setLineDash([]);
-      c.globalCompositeOperation = T.blend;
-      this.glowDot(c, this.hover.x, this.hover.y, 7 * k, 1);
-      if (!dark) {
-        c.globalCompositeOperation = "source-over";
-        c.fillStyle = "rgba(255,255,255,0.95)";
-        c.strokeStyle = rgba(this.hover.col, 0.9);
-        c.lineWidth = 1.5;
+      if (gap) {
+        c.strokeStyle = T.halo;
+        c.lineWidth = 1.2;
         c.beginPath();
-        c.arc(this.hover.x, this.hover.y, 3.2, 0, 7);
-        c.fill();
+        c.arc(hx, hy, 3.5, 0, 7);
         c.stroke();
+      } else {
+        c.globalCompositeOperation = T.blend;
+        this.glowDot(c, hx, hy, 7 * k, 1);
+        if (!dark) {
+          c.globalCompositeOperation = "source-over";
+          c.fillStyle = "rgba(255,255,255,0.95)";
+          c.strokeStyle = rgba(T.ring, 0.9);
+          c.lineWidth = 1.5;
+          c.beginPath();
+          c.arc(hx, hy, 3.2, 0, 7);
+          c.fill();
+          c.stroke();
+        }
       }
     }
-    if (ce >= 0 && ce < 0.5) {
-      c.globalCompositeOperation = "source-over";
-      c.fillStyle = `rgba(255,240,220,${(0.22 * (1 - ce / 0.5)).toFixed(3)})`;
+    if (celebrating && ce < 0.9) {
+      // the whole sky brightens for a moment
+      const e = ce < 0.12 ? ce / 0.12 : Math.pow(1 - (ce - 0.12) / 0.78, 1.6);
+      c.globalCompositeOperation = dark ? "lighter" : "source-over";
+      c.fillStyle = rgba(T.flash, T.flashA * clamp(e, 0, 1));
       c.fillRect(0, 0, w, h);
     }
     c.globalCompositeOperation = "source-over";
   }
 
-  private sampleAtX(x: number): Sample | null {
-    let best: Sample | null = null;
-    for (const s of this.samples) {
-      if (s.x <= x) best = s;
-      else break;
+  private reportReveal(p: number): void {
+    if (!this.revealCb) return;
+    let frac = 1;
+    if (p < 1 && this.cum.length > 1) {
+      const first = this.pts[0]!;
+      const x = lerp(first.x - 20, this.head.x + 4, easeInOut(p));
+      const di = clamp((x - this.dayX0) / (this.dayStep || 1), 0, this.cum.length - 1);
+      const i0 = Math.floor(di);
+      const total = this.cum[this.cum.length - 1]! || 1;
+      const a = i0 > 0 ? this.cum[i0 - 1]! : 0;
+      const b = this.cum[i0]!;
+      frac = clamp(lerp(a, b, di - i0) / total, 0, 1);
     }
-    return best;
+    if (frac === this.lastRevealP) return;
+    this.lastRevealP = frac;
+    this.revealCb(frac);
   }
 
-  private strands(c: Ctx, t: number, maxX: number): void {
+  private label(c: Ctx, text: string, x: number, y: number, fs: number): void {
+    const T = this.theme;
+    c.globalCompositeOperation = "source-over";
+    c.font = `500 ${fs}px "Geist Variable", Geist, system-ui`;
+    c.textAlign = "center";
+    c.textBaseline = "middle";
+    c.lineWidth = 3;
+    c.lineJoin = "round";
+    c.strokeStyle = T.textHalo;
+    c.strokeText(text, x, y);
+    c.fillStyle = T.text;
+    c.fillText(text, x, y);
+    c.textBaseline = "alphabetic";
+  }
+
+  private sampleAtX(x: number): Sample | null {
+    let best: Sample | null = null;
+    let bd = Infinity;
+    for (const s of this.samples) {
+      const d = Math.abs(s.x - x);
+      if (d < bd) {
+        bd = d;
+        best = s;
+      }
+    }
+    return best && bd <= Math.max(2, this.step) ? best : null;
+  }
+
+  /** Tool-mix strands: three thin threads weaving inside a ribbon. */
+  private strandPaths(c: Ctx, a: number, b: number, t: number, dim: number, live: boolean): void {
     const S = this.samples;
     const T = this.theme;
     const k = this.k;
     const dark = this.themeName === "dark";
-    for (const run of this.runs) {
-      const a = run.a;
-      const b = run.b;
-      if (S[a]!.x > maxX) continue;
-      const dim = run.current ? 1 : T.pastDim * 0.8;
-      TOOLS.forEach((tk, ti) => {
-        const g = c.createLinearGradient(S[a]!.x, 0, S[b]!.x, 0);
-        const span = S[b]!.x - S[a]!.x || 1;
-        const every = Math.max(1, Math.floor((b - a) / 30));
-        const col = mixRGB(T.tool[tk], dark ? [255, 250, 240] : [255, 255, 255], T.strandWhite);
-        for (let j = a; j <= b; j += every)
-          g.addColorStop(clamp((S[j]!.x - S[a]!.x) / span, 0, 1), rgba(col, T.strandA * dim * clamp(S[j]!.sh[ti]! * 1.6 + 0.08, 0, 1)));
-        c.strokeStyle = g;
-        c.lineWidth = Math.max(0.7, 0.9 * k);
-        c.beginPath();
-        for (let j = a; j <= b; j++) {
-          const s = S[j]!;
-          const tp = Math.min(1, (j - a) / 6, (b - j) / 3 + (run.current ? 1 : 0.1));
-          const off =
-            (Math.sin(s.x / (26 * k) + ti * 2.09 + t * (0.7 + ti * 0.13)) * 0.8 + Math.sin(s.x / (61 * k) - ti + t * 0.3) * 0.2) *
-            s.wd *
-            0.4 *
-            tp;
-          const x = s.x + s.nx * off;
-          const y = s.y + s.ny * off;
-          if (j === a) c.moveTo(x, y);
-          else c.lineTo(x, y);
-        }
-        c.stroke();
-      });
-    }
-  }
-
-  private todaySegment(c: Ctx, prog: number): void {
-    const S = this.samples;
-    const n = S.length;
-    const T = this.theme;
-    const k = this.k;
-    const a = Math.max(0, n - 1 - this.S);
-    const b = n - 1;
-    if (b - a < 1) return;
-    const prevKind = this.pts.length > 1 ? this.pts[this.pts.length - 2]!.kind : "dark";
-    const prevLit = prevKind === "lit" || prevKind === "frozen";
-    const wTarget = (this.v.wMin + Math.pow(clamp(prog, 0, 2.5) / 2.5, 0.7) * (this.v.wMax - this.v.wMin)) * k * T.wMul;
-    const wPrev = S[a]!.wd;
-    const col = S[b]!.col;
-    const widthAt = (j: number) => {
-      const f = (j - a) / (b - a);
-      return prevLit ? lerp(wPrev, wTarget, f) : wTarget * Math.min(1, f * 1.4 + 0.1);
-    };
-    // the wide glow tapers into the head so it never ends in a flat edge
-    const endTaper = (j: number, amount: number) => {
-      if (!amount) return 1;
-      const f = (j - a) / (b - a);
-      const e = clamp((f - 0.45) / 0.55, 0, 1);
-      return 1 - amount * e * e * (3 - 2 * e);
-    };
-    // the body narrows into the head orb so a very big day never ends in a flat cap
-    const draw = (mul: number, alpha: number, fill: RGB, pad = 0, taper = 0.55) => {
+    const wave = T.strandWave * k;
+    TOOLS.forEach((tk, ti) => {
+      let any = false;
+      for (let j = a; j <= b; j += 4) if ((S[j]!.sh[ti] ?? 0) > 0.03) any = true;
+      if (!any) return;
+      const g = c.createLinearGradient(S[a]!.x, 0, S[b]!.x, 0);
+      const span = S[b]!.x - S[a]!.x || 1;
+      const every = Math.max(1, Math.floor((b - a) / 30));
+      const col = mixRGB(T.tool[tk], dark ? [255, 250, 240] : [255, 255, 255], T.strandWhite);
+      for (let j = a; j <= b; j += every) {
+        const s = S[j]!;
+        g.addColorStop(clamp((s.x - S[a]!.x) / span, 0, 1), rgba(col, T.strandA * dim * s.a * clamp(s.sh[ti]! * 1.6 + 0.08, 0, 1)));
+      }
+      c.strokeStyle = g;
+      c.lineWidth = Math.max(0.6, (dark ? 0.9 : 0.75) * k);
       c.beginPath();
       for (let j = a; j <= b; j++) {
         const s = S[j]!;
-        const hw = (widthAt(j) * mul * 0.5 + pad) * endTaper(j, taper);
-        if (j === a) c.moveTo(s.x + s.nx * hw, s.y + s.ny * hw);
-        else c.lineTo(s.x + s.nx * hw, s.y + s.ny * hw);
+        const tp = Math.min(1, (j - a) / 6, (b - j) / 3 + (live ? 1 : 0.1));
+        const off =
+          (Math.sin(s.x / wave + ti * 2.09 + t * (0.7 + ti * 0.13)) * 0.8 + Math.sin(s.x / (wave * 2.3) - ti + t * 0.3) * 0.2) * s.wd * (dark ? 0.36 : 0.26) * tp;
+        const x = s.x + s.nx * off;
+        const y = s.y + s.ny * off;
+        if (j === a) c.moveTo(x, y);
+        else c.lineTo(x, y);
       }
-      for (let j = b; j >= a; j--) {
-        const s = S[j]!;
-        const hw = (widthAt(j) * mul * 0.5 + pad) * endTaper(j, taper);
-        c.lineTo(s.x - s.nx * hw, s.y - s.ny * hw);
-      }
-      c.closePath();
-      c.fillStyle = rgba(fill, alpha);
-      c.fill();
-    };
-    const lit = prog >= 1;
-    const a0 = lit ? 1 : 0.55 + 0.45 * clamp(prog, 0, 1);
-    const glowCol = T.glowTint ? mixRGB(col, T.glowTint, T.glowTintAmt) : col;
-    // today's glow is live (not in the blurred cache), so it is built from
-    // soft radial falloffs instead of a hard-edged polygon
-    const glowR = (j: number) => widthAt(j) * T.glowMul * 0.42 * endTaper(j, 0.92);
-    for (let j = a; j <= b; j++) {
-      const s = S[j]!;
-      const r = Math.max(2, glowR(j));
-      const g = c.createRadialGradient(s.x, s.y, 0, s.x, s.y, r);
-      g.addColorStop(0, rgba(glowCol, (T.glowA * 0.55 * a0) / Math.max(1, (b - a + 1) / 3)));
-      g.addColorStop(1, rgba(glowCol, 0));
-      c.fillStyle = g;
-      c.beginPath();
-      c.arc(s.x, s.y, r, 0, 7);
-      c.fill();
-    }
-    if (T.rim) draw(T.bodyMul, T.rimA * a0, mixRGB(col, T.rim, 0.6), Math.max(0.6, 0.7 * k));
-    draw(T.bodyMul, T.bodyA * 0.85 * a0, col);
-    if (T.inner > 0) draw(T.bodyMul * 0.5, T.inner * a0, mixRGB(col, T.innerTint, 0.55));
-    draw(T.coreW * 1.25, (this.themeName === "dark" ? 0.8 : 0.85) * a0, T.core);
+      c.stroke();
+    });
   }
 
   private shimmer(c: Ctx, t: number, ce: number): void {
-    const run = this.runs.find((r) => r.current);
+    const run = this.curRun;
     if (!run || this.reduced) return;
+    if (ce >= 0 && ce < 2.2) return; // the roll call owns the ribbon during the celebration
     const S = this.samples;
-    const a = run.a;
-    const b = run.b;
+    const a = run.s0;
+    const b = run.s1;
     const len = b - a;
     if (len < 4) return;
-    let p: number;
-    if (ce >= 0 && ce < 1.6) p = 1 - easeOutQuint(clamp((ce - 0.15) / 1.3, 0, 1));
-    else p = easeInOut((t % 7) / 7);
+    const p = easeInOut((t % 7) / 7);
     const center = a + p * len;
-    const win = Math.max(6, len * 0.08);
+    const win = Math.max(8, len * 0.11);
     const T = this.theme;
-    const boost = ce >= 0 && ce < 1.6 ? 1.6 : 1;
     c.lineCap = "round";
     for (let j = Math.max(a + 1, Math.floor(center - win)); j <= Math.min(b, Math.ceil(center + win)); j++) {
       const f = 1 - Math.abs(j - center) / win;
       if (f <= 0) continue;
-      c.strokeStyle = rgba(T.shimmer, T.shimmerA * f * f * boost);
-      c.lineWidth = S[j]!.wd * (this.themeName === "dark" ? 0.9 : 0.55) * boost;
+      c.strokeStyle = rgba(T.shimmer, T.shimmerA * f * f * S[j]!.a);
+      c.lineWidth = S[j]!.wd * (this.themeName === "dark" ? 0.85 : 0.5);
       c.beginPath();
       c.moveTo(S[j - 1]!.x, S[j - 1]!.y);
       c.lineTo(S[j]!.x, S[j]!.y);
       c.stroke();
+    }
+  }
+
+  /* ---------------- celebration ---------------- */
+
+  /** Roll-call timing: when the flash starts and how long it takes to run the streak. */
+  private rollCallTiming(): { start: number; dur: number } {
+    const days = this.curRun?.days ?? 1;
+    return { start: 0.16, dur: clamp(0.5 + days * 0.012, 0.65, 1.25) };
+  }
+
+  /** 0..1 flare for a point at x as the roll-call flash passes it. */
+  private rollCallEnvelope(x: number, ce: number): number {
+    const run = this.curRun;
+    if (!run || ce < 0 || this.reduced) return 0;
+    const x0 = this.samples[run.s0]!.x;
+    const x1 = this.head.x;
+    if (x < x0 - 1 || x > x1 + 1) return 0;
+    const { start, dur } = this.rollCallTiming();
+    const u = (x1 - x) / (x1 - x0 || 1); // 0 at the head, 1 at the run's start
+    const tPass = start + u * dur;
+    const dtp = ce - tPass;
+    if (dtp < -0.05) return 0;
+    return dtp < 0 ? 1 + dtp / 0.05 : Math.exp(-dtp / 0.32);
+  }
+
+  /** A flash racing back along the streak; every lit day pulses once, in sequence. */
+  private rollCall(c: Ctx, ce: number): void {
+    const run = this.curRun;
+    if (!run) return;
+    const S = this.samples;
+    const T = this.theme;
+    const k = this.k;
+    const dark = this.themeName === "dark";
+    const { start, dur } = this.rollCallTiming();
+    const x0 = S[run.s0]!.x;
+    const x1 = this.head.x;
+    const p = (ce - start) / dur;
+    // the ribbon brightens behind the flash, then settles
+    if (p > 0 && p < 1.6) {
+      const fx = x1 - (x1 - x0) * clamp(p, 0, 1);
+      c.lineCap = "round";
+      for (let j = run.s0 + 1; j <= run.s1; j++) {
+        const s = S[j]!;
+        if (s.x < fx - 2) continue;
+        const env = this.rollCallEnvelope(s.x, ce);
+        if (env < 0.03) continue;
+        c.strokeStyle = rgba(T.shimmer, (dark ? 0.55 : 0.85) * env * s.a);
+        c.lineWidth = s.wd * (dark ? 1 : 0.6) * (0.6 + 0.6 * env);
+        c.beginPath();
+        c.moveTo(S[j - 1]!.x, S[j - 1]!.y);
+        c.lineTo(s.x, s.y);
+        c.stroke();
+      }
+      if (p <= 1) {
+        const y = this.yAt(fx);
+        c.globalCompositeOperation = dark ? "lighter" : "source-over";
+        this.glowDot(c, fx, y, 16 * k, 0.9);
+        this.glowDot(c, fx, y, 5 * k, 1);
+      }
+    }
+    // each lit day pulses once as the flash passes
+    const P = this.pts;
+    const every = Math.max(1, Math.ceil(5 / Math.max(1, this.step)));
+    for (let q = run.p0; q < P.length - 1; q += every) {
+      const pt = P[q]!;
+      if (pt.role !== "current") continue;
+      const env = this.rollCallEnvelope(pt.x, ce);
+      if (env < 0.04) continue;
+      const s = (2.4 + pt.wd * 0.32) * k * (0.5 + env * 0.8);
+      this.sparkle(c, pt.x, pt.y, s, q * 0.7, env);
     }
   }
 
@@ -1271,7 +1642,7 @@ export class Trail {
     const f = clamp(prog, 0, 1);
     const breath = this.reduced ? 1 : 1 + Math.sin(t * 2.2) * 0.04;
     let pop = 1;
-    if (ce >= 0 && ce < 1.4) pop = 1 + (spring(ce / 0.9) - 1) * 0.6 + (1 - clamp(ce / 0.25, 0, 1)) * 0.5;
+    if (ce >= 0 && ce < 1.4 && !this.reduced) pop = 1 + (spring(ce / 0.9) - 1) * 0.6 + (1 - clamp(ce / 0.25, 0, 1)) * 0.7;
     c.globalCompositeOperation = "source-over";
     if (!lit) {
       c.strokeStyle = T.halo;
@@ -1297,7 +1668,7 @@ export class Trail {
     c.globalCompositeOperation = T.blend;
     const r = R * (0.45 + 0.55 * f) * breath * pop * (lit ? 1.12 : 1);
     const col = this.pts[this.pts.length - 1]!.col;
-    const warmCol: RGB = dark ? col : mixRGB(col, [255, 170, 120], 0.35);
+    const warmCol: RGB = dark ? col : mixRGB(col, [255, 160, 110], 0.4);
     const g = c.createRadialGradient(x, y, 0, x, y, r * 2.6);
     g.addColorStop(0, rgba(T.core, 1));
     g.addColorStop(0.14, rgba(T.core, 0.9));
@@ -1314,7 +1685,14 @@ export class Trail {
       c.arc(x, y, r * 0.42, 0, 7);
       c.fill();
     }
-    if (lit || tier.min >= 7) this.sparkle(c, x, y, r * (lit ? (dark ? 1.45 : 1.2) : 1.1), t * 0.25, lit ? 0.9 : 0.3, null, true);
+    if (lit || tier.min >= 7) this.sparkle(c, x, y, r * (lit ? (dark ? 1.45 : 1.2) : 1.1), t * 0.25, lit ? 0.9 : 0.3, true);
+    // milestone: a large star-pop over the head
+    if (this.celebrateMilestone && ce >= 0 && ce < 1.8 && !this.reduced) {
+      const e = ce / 1.8;
+      const sz = R * (1.2 + 3.4 * spring(Math.min(1, ce / 0.7)));
+      this.sparkle(c, x, y, sz, ce * 0.8, (1 - e) * 1, false);
+      this.sparkle(c, x, y, sz * 0.55, -ce * 0.5 + 0.4, (1 - e) * 0.8, true);
+    }
     if (tier.min >= 30) {
       const S = this.samples;
       const j0 = Math.max(0, S.length - 1 - this.S * 6);
@@ -1332,8 +1710,8 @@ export class Trail {
     }
   }
 
-  private headSparks(prog: number, _t: number, _tier: TrailTier): void {
-    if (this.reduced || !this.pts.length) return;
+  private headSparks(prog: number, revealP: number): void {
+    if (this.reduced || !this.pts.length || revealP < 1) return;
     const lit = prog >= 1;
     const f = clamp(prog, 0, 1);
     const R = this.v.headR * this.k;
@@ -1341,6 +1719,7 @@ export class Trail {
     const rand = this.random;
     if (rand() < (0.08 + 0.25 * f) * (lit ? 1.6 : 1)) {
       const col = this.pts[this.pts.length - 1]!.col;
+      const T = this.theme;
       this.particles.push({
         x: this.head.x + (rand() - 0.5) * r,
         y: this.head.y + (rand() - 0.5) * r,
@@ -1348,13 +1727,13 @@ export class Trail {
         vy: 6 + rand() * 14,
         life: 0,
         max: 1.2 + rand(),
-        s: (0.6 + rand() * 1.2) * this.k,
-        col: this.themeName === "light" ? (rand() < 0.5 ? [255, 170, 120] : [240, 120, 140]) : rand() < 0.5 ? col : this.theme.core,
+        s: (0.6 + rand() * 1.2) * this.k * (this.themeName === "light" ? 0.8 : 1),
+        col: this.themeName === "light" ? (rand() < 0.6 ? [255, 176, 112] : [255, 222, 190]) : rand() < 0.5 ? col : T.core,
       });
     }
   }
 
-  private sparkle(c: Ctx, x: number, y: number, s: number, rot: number, a: number, label: number | null, thin = false): void {
+  private sparkle(c: Ctx, x: number, y: number, s: number, rot: number, a: number, thin = false): void {
     c.save();
     c.translate(x, y);
     c.rotate(rot * 0.3);
@@ -1373,18 +1752,11 @@ export class Trail {
       c.fill();
     }
     c.restore();
-    if (label) {
-      c.globalCompositeOperation = "source-over";
-      c.fillStyle = T.text;
-      c.font = `500 ${Math.round(10 * Math.max(1, this.k * 0.8))}px "Geist Variable", Geist, system-ui`;
-      c.textAlign = "center";
-      c.fillText(`${label} days`, x, y - s - 6);
-    }
   }
 
   private glowDot(c: Ctx, x: number, y: number, r: number, a: number): void {
     const g = c.createRadialGradient(x, y, 0, x, y, r);
-    const col: RGB = this.themeName === "dark" ? this.theme.core : [255, 190, 150];
+    const col: RGB = this.themeName === "dark" ? this.theme.core : [255, 176, 130];
     g.addColorStop(0, rgba(col, a));
     g.addColorStop(1, rgba(col, 0));
     c.fillStyle = g;
@@ -1425,7 +1797,6 @@ export class Trail {
       for (let x = w + pad; x >= -pad; x -= 8) c.lineTo(x, bot + wave(x, 2.4 + b, 0.08));
       c.closePath();
       c.fill();
-      // irregular vertical rays: the folds of the curtain
       const rays = 7 + Math.round(r() * 5);
       for (let i = 0; i < rays; i++) {
         const x = -pad + r() * (w + pad * 2);
@@ -1458,23 +1829,23 @@ export class Trail {
     if (!this.pts.length || this.reduced) return;
     const T = this.theme;
     const k = this.k || 1;
-    const cols: RGB[] = [T.tool.claude, T.tool.codex, T.tool.gemini, T.core, [255, 214, 140]];
     const rand = this.random;
-    for (let i = 0; i < 110; i++) {
+    const count = this.celebrateMilestone ? 190 : 150;
+    for (let i = 0; i < count; i++) {
       const a = rand() * Math.PI * 2;
-      const sp = (60 + rand() * 220) * k;
+      const sp = (70 + Math.pow(rand(), 0.7) * 300) * k;
       this.particles.push({
         x: this.head.x,
         y: this.head.y,
         vx: Math.cos(a) * sp,
-        vy: Math.sin(a) * sp - 40 * k,
+        vy: Math.sin(a) * sp - 50 * k,
         life: 0,
-        max: 1 + rand() * 1.4,
-        s: (0.8 + rand() * 2) * k,
-        col: cols[i % cols.length]!,
-        g: 110 * k,
-        drag: 2.2,
-        star: i % 7 === 0,
+        max: 1.1 + rand() * 1.6,
+        s: (0.9 + rand() * 2.1) * k,
+        col: T.confetti[i % T.confetti.length]!,
+        g: 120 * k,
+        drag: 2.1,
+        star: i % 6 === 0,
       });
     }
   }
@@ -1499,15 +1870,23 @@ export class Trail {
   }
 
   private drawParticles(c: Ctx): void {
-    c.globalCompositeOperation = this.theme.blend;
+    const T = this.theme;
+    c.globalCompositeOperation = T.blend;
+    const edge = T.confettiEdge;
     for (const p of this.particles) {
       const a = 1 - p.life / p.max;
-      if (p.star) this.sparkle(c, p.x, p.y, p.s * 3, p.life * 3, a, null);
+      if (p.star) this.sparkle(c, p.x, p.y, p.s * 3, p.life * 3, a);
       else {
         c.fillStyle = rgba(p.col, a * 0.95);
         c.beginPath();
         c.arc(p.x, p.y, p.s * (0.6 + a * 0.4), 0, 7);
         c.fill();
+        if (edge > 0 && p.g) {
+          // light theme: a darker rim so confetti reads on cream
+          c.strokeStyle = rgba(mixRGB(p.col, [60, 20, 50], 0.45), a * edge);
+          c.lineWidth = 0.8;
+          c.stroke();
+        }
       }
     }
   }
