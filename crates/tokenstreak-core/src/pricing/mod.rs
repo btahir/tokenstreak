@@ -86,7 +86,17 @@ impl std::fmt::Debug for PriceTable {
 impl PriceTable {
     /// The snapshot bundled with the app.
     pub fn embedded() -> Self {
-        Self::from_compact(EMBEDDED).expect("embedded price snapshot parses")
+        // Verified by tests; an empty table (costs 0, models "unpriced") is a
+        // safe fallback that can never take the app down.
+        Self::from_compact(EMBEDDED).unwrap_or_else(|e| {
+            tracing::error!(error = %e, "embedded price list failed to parse");
+            Self {
+                entries: FxHashMap::default(),
+                compact: BTreeMap::new(),
+                meta: PriceMeta::default(),
+                cache: RwLock::new(FxHashMap::default()),
+            }
+        })
     }
 
     pub fn from_compact(json: &str) -> Result<Self, String> {

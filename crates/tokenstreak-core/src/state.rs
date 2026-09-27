@@ -131,8 +131,7 @@ mod tests {
     fn round_trips() {
         let dir = tempfile::tempdir().unwrap();
         let st = Store::new(dir.path());
-        let mut s = Settings::default();
-        s.daily_goal = 42;
+        let s = Settings { daily_goal: 42, ..Default::default() };
         st.save_settings(&s).unwrap();
         assert_eq!(st.load_settings().daily_goal, 42);
     }

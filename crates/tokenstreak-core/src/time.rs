@@ -116,6 +116,23 @@ impl Clock {
         Self { tz: TimeZone::system() }
     }
 
+    /// The system zone read fresh: jiff caches the system zone for up to five
+    /// minutes, so after a time-zone change the `/etc/localtime` link is
+    /// consulted directly (unless `TZ` overrides it).
+    pub fn system_fresh() -> Self {
+        if std::env::var_os("TZ").is_none() {
+            if let Ok(target) = std::fs::read_link("/etc/localtime") {
+                let s = target.to_string_lossy();
+                if let Some(i) = s.find("zoneinfo/") {
+                    if let Ok(tz) = TimeZone::get(&s[i + "zoneinfo/".len()..]) {
+                        return Self { tz };
+                    }
+                }
+            }
+        }
+        Self::system()
+    }
+
     /// A named IANA zone, falling back to the system zone if unknown.
     pub fn named(name: Option<&str>) -> Self {
         match name.and_then(|n| TimeZone::get(n).ok()) {

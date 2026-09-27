@@ -116,11 +116,11 @@ fn follows_system_time_zone_changes() {
     // Not following the system zone (tests, pinned zones): nothing happens.
     assert!(!e.check_system_timezone());
     // An app engine built in another zone notices the system zone differs.
-    let odd = if Clock::system().name() == "Pacific/Kiritimati" { "Pacific/Pago_Pago" } else { "Pacific/Kiritimati" };
+    let odd = if Clock::system_fresh().name() == "Pacific/Kiritimati" { "Pacific/Pago_Pago" } else { "Pacific/Kiritimati" };
     e.set_clock_for_test(Clock::named(Some(odd)), true);
     let before = daily(&e);
     assert!(e.check_system_timezone());
-    assert_eq!(e.clock().name(), Clock::system().name());
+    assert_eq!(e.clock().name(), Clock::system_fresh().name());
     assert!(!e.check_system_timezone(), "only once");
     let after = daily(&e);
     let sum = |m: &BTreeMap<String, (u64, u64)>| m.values().map(|v| v.0).sum::<u64>();

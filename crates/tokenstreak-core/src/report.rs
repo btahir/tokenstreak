@@ -395,7 +395,9 @@ pub fn breakdown(ledger: &Ledger, c: &Computed, q: &RangeQuery, ws: WeekStart) -
     // Projects are identified by folder name across tools (Claude and Codex
     // record the full path, Gemini a folder id), so group by label.
     let mut by_project: FxHashMap<&str, SliceAcc> = FxHashMap::default();
-    let mut sess: FxHashMap<u32, (Tool, u32, i64, i64, u64, f64, u32, BTreeSet<u32>)> = FxHashMap::default();
+    // (tool, project, first ts, last ts, tokens, cost, messages, models)
+    type SessionAcc = (Tool, u32, i64, i64, u64, f64, u32, BTreeSet<u32>);
+    let mut sess: FxHashMap<u32, SessionAcc> = FxHashMap::default();
     let mut hourly = vec![0u64; 24];
     let mut weekday = vec![0u64; 7];
     let mut active: BTreeSet<Date> = BTreeSet::new();
@@ -445,7 +447,7 @@ pub fn breakdown(ledger: &Ledger, c: &Computed, q: &RangeQuery, ws: WeekStart) -
         .into_iter()
         .map(|(t, a)| slice(t.as_str().into(), t.display_name().into(), a, Some(t)))
         .collect();
-    tools.sort_by(|a, b| b.tokens.total.cmp(&a.tokens.total));
+    tools.sort_by_key(|t| std::cmp::Reverse(t.tokens.total));
     let mut models: Vec<Slice> = by_model
         .into_iter()
         .map(|((m, t), a)| {

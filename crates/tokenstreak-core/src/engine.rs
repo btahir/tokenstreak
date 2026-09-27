@@ -372,13 +372,12 @@ impl Engine {
 
     /// Follows a change of the system time zone (travel, manual change) when
     /// no zone is pinned in settings: dates are re-bucketed in the new zone.
-    /// jiff re-reads the system zone at most every 5 minutes. Returns true
-    /// when the zone changed.
+    /// Returns true when the zone changed.
     pub fn check_system_timezone(&mut self) -> bool {
         if !self.follow_system_tz || self.settings.timezone.is_some() {
             return false;
         }
-        let now = Clock::system();
+        let now = Clock::system_fresh();
         if now.tz == self.clock.tz {
             return false;
         }
