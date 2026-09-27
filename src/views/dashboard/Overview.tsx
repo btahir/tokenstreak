@@ -383,11 +383,3 @@ function RecentAchievements({ snap, go }: { snap: AppSnapshot; go: (r: Route) =>
     </Card>
   );
 }
-
-export function progressMeta(a: AppSnapshot["achievements"][number]): string {
-  const left = Math.max(0, a.target - a.progress);
-  if (a.id.startsWith("streak-")) return `${Math.ceil(left)} ${Math.ceil(left) === 1 ? "day" : "days"} to go`;
-  if (a.target >= 1000) return `${formatTokens(left)} to go`;
-  if (a.target > 1 && a.target < 1) return `${Math.round((a.progress / a.target) * 100)}%`;
-  return `${Math.round((a.progress / (a.target || 1)) * 100)}% there`;
-}

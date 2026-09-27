@@ -143,14 +143,17 @@ fn achievements_are_deterministic_with_unlock_dates() {
     assert!(a.len() >= 12, "at least 12 achievements are defined");
     let unlocked: BTreeMap<String, Option<String>> = a.iter().map(|x| (x.id.clone(), x.unlocked_at.clone())).collect();
     assert_eq!(unlocked, b.iter().map(|x| (x.id.clone(), x.unlocked_at.clone())).collect());
-    assert_eq!(unlocked["first-spark"].as_deref(), Some("2026-09-11"));
-    assert_eq!(unlocked["goal-getter"].as_deref(), Some("2026-09-11"));
-    assert_eq!(unlocked["streak-3"].as_deref(), Some("2026-09-13"));
-    assert_eq!(unlocked["streak-7"].as_deref(), Some("2026-09-17"));
-    assert_eq!(unlocked["day-1m"].as_deref(), Some("2026-09-11"));
-    assert_eq!(unlocked["lifetime-100m"], None);
-    assert_eq!(unlocked["night-owl"].as_deref(), Some("2026-09-11"), "02:30 local");
-    assert_eq!(unlocked["weekly-goal"].as_deref(), Some("2026-09-18"), "week of Mon 14th crosses 5M on its 5th day");
+    assert_eq!(unlocked["first-light"].as_deref(), Some("2026-09-11"));
+    assert_eq!(unlocked["seven-sparks"].as_deref(), Some("2026-09-17"));
+    assert_eq!(unlocked["full-moon"], None);
+    assert_eq!(unlocked["megawatt"], None, "1.2M a day is not a 10M day");
+    assert_eq!(unlocked["constellation"], None);
+    assert_eq!(unlocked["rekindled"], None);
+    assert_eq!(unlocked["safety-net"], None);
+    assert_eq!(unlocked["high-tide"].as_deref(), Some("2026-09-18"), "week of Mon 14th crosses 5M on its 5th day");
+    assert!(a.iter().all(|x| !x.id.contains("owl")), "nothing rewards working at 2 am");
+    let volume = a.iter().filter(|x| x.category == tokenstreak_core::api::AchievementCategory::Scale).count();
+    assert!(volume <= 3, "at most three volume badges");
     let ids: BTreeSet<&str> = a.iter().map(|x| x.id.as_str()).collect();
     assert_eq!(ids.len(), a.len(), "ids are unique");
 }

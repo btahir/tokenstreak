@@ -127,8 +127,10 @@ test("achievements: all badges with dates or progress", async ({ page }) => {
   await page.setViewportSize({ width: 1180, height: 800 });
   await page.goto(`/?view=dashboard&preset=heavy-multi-tool&devtools=0&live=0&page=achievements`);
   const grid = page.getByTestId("achievement-grid");
-  await expect(grid.locator(".badge")).toHaveCount(24);
+  await expect(grid.locator(".badge")).toHaveCount(16);
   await expect(grid.locator(".badge--locked")).toHaveCount(2);
+  await expect(grid).not.toContainText("Legendary");
+  await expect(grid).toContainText("Consistency · Gold");
   await expect(grid).toContainText("Unlocked");
 });
 

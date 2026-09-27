@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { Achievement, AchievementCategory, AppSnapshot } from "../../api/types";
-import { Badge, BadgeArt, CATEGORY_LABEL, TIER_CLASS, TIER_LABEL } from "../../components/badges";
+import { Badge, BadgeArt, CATEGORY_LABEL, METAL_LABEL } from "../../components/badges";
 import { Progress, Seg } from "../../components/ui";
 import { formatDate, formatInt, formatTokens } from "../../lib/format";
 import { useApi } from "../../state/store";
@@ -14,9 +14,12 @@ export function progressText(a: Achievement): string {
   const left = Math.max(0, a.target - a.progress);
   if (a.unlockedAt) return `Unlocked ${formatDate(a.unlockedAt)}`;
   if (a.progress <= 0) return a.description;
-  if (a.category === "streak" && a.target > 1) return `${formatInt(Math.ceil(left))} ${Math.ceil(left) === 1 ? "day" : "days"} to go`;
+  if (["seven-sparks", "full-moon", "aurora", "halo"].includes(a.id)) return `${formatInt(Math.ceil(left))} ${Math.ceil(left) === 1 ? "day" : "days"} to go`;
   if (a.target >= 1000) return `${formatTokens(a.progress)} of ${formatTokens(a.target)}`;
-  if (a.target < 1) return `Best so far ${Math.round(a.progress * 100)}% of ${Math.round(a.target * 100)}%`;
+  if (a.id === "featherweight") return `Best week so far ${Math.round(a.progress * 100)}% leaner`;
+  if (a.target < 1) return `Best day so far ${Math.round(a.progress * 100)}% of ${Math.round(a.target * 100)}%`;
+  if (a.id === "echo") return `Best day so far ${a.progress.toFixed(1)}×`;
+  if (a.id === "steady-hand") return `${formatInt(a.progress)} of 4 steady weeks`;
   if (a.target > 1 && !Number.isInteger(a.progress) && a.target <= 10) return `Best ${a.progress.toFixed(1)}× of ${formatInt(a.target)}×`;
   if (a.target > 1) return `${formatInt(a.progress)} of ${formatInt(a.target)}`;
   return a.description;
@@ -68,8 +71,8 @@ export function Achievements({ snap }: { snap: AppSnapshot }) {
             </div>
             <Progress value={next.progress / (next.target || 1)} className="next__bar" label={`${next.title} progress`} />
           </div>
-          <span className={`rarity rarity--${TIER_CLASS[next.tier]}`}>
-            {TIER_LABEL[next.tier]} · {CATEGORY_LABEL[next.category].toLowerCase()}
+          <span className="badge__family">
+            {CATEGORY_LABEL[next.category]} · {METAL_LABEL[next.tier]}
           </span>
         </section>
       )}

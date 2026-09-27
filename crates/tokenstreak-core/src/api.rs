@@ -264,13 +264,17 @@ pub enum AchievementTier {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
+/// Achievement family.
 pub enum AchievementCategory {
-    Streak,
-    Volume,
-    Goals,
+    /// Showing up: first light, streaks, steady weeks.
+    Consistency,
+    /// Coming back and resting well.
+    Care,
+    /// Working well: cache reuse, lean weeks.
+    Craft,
     Explorer,
-    Habits,
-    Efficiency,
+    /// The only volume badges.
+    Scale,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
