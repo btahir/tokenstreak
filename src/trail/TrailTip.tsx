@@ -5,6 +5,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { formatDate, formatInt, formatPercent, formatTokens, TOOL_SHORT } from "../lib/format";
 import { placeTip } from "./layout";
+import { measureAvoid } from "./TrailCanvas";
 import type { TrailHover } from "./types";
 
 export function TrailTip({ hover }: { hover: TrailHover }) {
@@ -19,7 +20,9 @@ export function TrailTip({ hover }: { hover: TrailHover }) {
     const el = ref.current;
     const box = el?.offsetParent as HTMLElement | null;
     if (!el || !box) return;
-    setPos(placeTip(hover.x, hover.y, el.offsetWidth, el.offsetHeight, box.clientWidth, box.clientHeight, 16, 10));
+    const canvas = box.querySelector("canvas");
+    const hud = canvas ? measureAvoid(canvas, box) : [];
+    setPos(placeTip(hover.x, hover.y, el.offsetWidth, el.offsetHeight, box.clientWidth, box.clientHeight, 16, 10, 90, hud));
   }, [hover.x, hover.y, hover.index, run?.days]);
 
   return (

@@ -395,13 +395,29 @@ export function placeLabels(labels: LabelIn[], rects: Rect[], bounds: { w: numbe
  * there is room (at least `minAbove`), otherwise below, and always clamped
  * horizontally inside the box.
  */
-export function placeTip(ax: number, ay: number, tipW: number, tipH: number, boxW: number, boxH: number, gap = 16, pad = 8, minAbove = 90): { left: number; top: number; below: boolean } {
-  const roomAbove = ay - gap - pad;
-  const below = roomAbove < Math.max(tipH, minAbove) && boxH - (ay + gap + tipH) >= pad - 0.5 * tipH;
-  let top = below ? ay + gap : ay - gap - tipH;
-  top = clamp(top, pad, Math.max(pad, boxH - tipH - pad));
+export function placeTip(
+  ax: number,
+  ay: number,
+  tipW: number,
+  tipH: number,
+  boxW: number,
+  boxH: number,
+  gap = 16,
+  pad = 8,
+  minAbove = 90,
+  avoid: Rect[] = [],
+): { left: number; top: number; below: boolean } {
   const left = clamp(ax - tipW / 2, pad, Math.max(pad, boxW - tipW - pad));
-  return { left, top, below };
+  const fit = (below: boolean) => clamp(below ? ay + gap : ay - gap - tipH, pad, Math.max(pad, boxH - tipH - pad));
+  const covers = (top: number) => avoid.filter((r) => hit({ x: left, y: top, w: tipW, h: tipH }, r)).reduce((a, r) => a + r.w * r.h, 0);
+  const roomAbove = ay - gap - pad;
+  const roomBelow = boxH - pad - (ay + gap);
+  const aboveOk = roomAbove >= Math.max(tipH, minAbove);
+  const belowOk = roomBelow >= tipH * 0.5;
+  // prefer above; go below when there's no room, or when above would cover HUD text and below would not
+  let below = !aboveOk && belowOk;
+  if (!below && avoid.length && belowOk && covers(fit(false)) > covers(fit(true))) below = true;
+  return { left, top: fit(below), below };
 }
 
 /** Wander period (in days) for a given day step: at least ~260 px on screen, quantized so it rarely changes. */

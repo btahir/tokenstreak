@@ -212,6 +212,13 @@ describe("tooltip placement", () => {
     expect(p.below).toBe(true);
     expect(p.top).toBeGreaterThanOrEqual(60);
   });
+  it("drops below the day rather than cover the hero text, when there is room", () => {
+    const hud: Rect[] = [{ x: 20, y: 20, w: 300, h: 110 }];
+    const p = placeTip(120, 170, 180, 80, 900, 300, 16, 8, 90, hud);
+    expect(p.below).toBe(true);
+    const q = placeTip(600, 170, 180, 80, 900, 300, 16, 8, 90, hud);
+    expect(q.below).toBe(false);
+  });
   it("is clamped inside the card at both edges", () => {
     expect(placeTip(5, 200, 180, 80, 900, 300).left).toBeGreaterThanOrEqual(8);
     const r = placeTip(895, 200, 180, 80, 900, 300);

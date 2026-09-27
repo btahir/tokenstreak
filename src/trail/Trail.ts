@@ -801,6 +801,11 @@ export class Trail {
     // emphasizeAll (short cards): a quiet day narrows the arc to a thread instead of breaking it
     const { roles, runs } = classify(B, { minPastRun: 3, bridgeGaps: v.emphasizeAll ? 3 : Math.floor(5 / Math.max(0.5, step)) });
     this.runs = runs;
+    // dense layouts: a rest day or freeze inside a run is sub-pixel; draw it as part of the run
+    // (a moonlight tint every week read as stripes)
+    if (step < 8)
+      for (const r of runs)
+        for (let q = r.a; q <= r.b; q++) if (roles[q] === "bridge") roles[q] = r.current ? "current" : "past";
 
     // natural centre line: a slow wander seeded by the date, lifted by busy stretches
     const period = wanderPeriod(dayStep);
@@ -847,10 +852,12 @@ export class Trail {
       return 0;
     });
     const cool = roles.map((r) => (all ? 0 : r === "past" ? T.afterAmt : r === "filament" ? T.afterAmt * 0.6 : 0));
-    const u = roles.map(() => 0.5);
+    // light theme body: rose at the start of the current run warming to apricot at the head;
+    // all history sits at one rose tone (a ramp per past run read as stripes)
+    const u = roles.map(() => 0.3);
     for (const r of runs) {
       const end = r.current ? m - 1 : r.b;
-      for (let q = r.a; q <= end; q++) u[q] = end > r.a ? (q - r.a) / (end - r.a) : 1;
+      if (r.current) for (let q = r.a; q <= end; q++) u[q] = end > r.a ? 0.3 + (0.7 * (q - r.a)) / (end - r.a) : 1;
       // the start of the current run fades in over its first days: no overexposed blob
       if (r.current && lod <= 2 && end - r.a >= 3) {
         [0.42, 0.7, 0.9].forEach((f, j) => {
@@ -892,11 +899,17 @@ export class Trail {
     const sigT = clamp(16 / Math.max(0.5, step), 1.5, 8);
     const mix = TOOLS.map((tk) => gaussian(B.map((b) => b.tools?.[tk] ?? 0), sigT, mask));
     const cacheS = gaussian(B.map((b) => b.cache), sigT, mask);
+    const cols = B.map((_, i) => {
+      const tools: ToolShares = { claude: mix[0]![i]!, codex: mix[1]![i]!, gemini: mix[2]![i]! };
+      const has = tools.claude! + tools.codex! + tools.gemini! > 0.01;
+      return roles[i] === "bridge" ? FROZEN_COL : toolColor(T, has ? tools : { claude: 1 });
+    });
+    // the moonlight of a bridge fades in and out instead of switching hue
+    const ch = [0, 1, 2].map((c) => gaussian(cols.map((x) => x[c]!), 0.9, mask));
     const pts: Pt[] = B.map((b, i) => {
       const role = roles[i]!;
       const tools: ToolShares = { claude: mix[0]![i]!, codex: mix[1]![i]!, gemini: mix[2]![i]! };
-      const has = tools.claude! + tools.codex! + tools.gemini! > 0.01;
-      const col = role === "bridge" ? FROZEN_COL : toolColor(T, has ? tools : { claude: 1 });
+      const col: RGB = [ch[0]![i]!, ch[1]![i]!, ch[2]![i]!];
       return { x: px[i]!, y: ys[i]!, wd: wdS[i]!, a: alS[i]!, cool: coolS[i]!, u: u[i]!, col, tools, cache: cacheS[i]!, role, b };
     });
     this.pts = pts;
