@@ -295,9 +295,10 @@ export function Heatmap({ columns, gap = 3, minCell = 10, maxCell = 17 }: { colu
               data-goal={c.met ? "" : undefined}
               data-frozen={c.frozen ? "" : undefined}
               data-today={c.today ? "" : undefined}
-              data-future={c.future || c.pad ? "" : undefined}
+              data-future={c.future ? "" : undefined}
+              data-pad={c.pad && !c.future ? "" : undefined}
               style={{ gridColumn: ci + 1, gridRow: ri + 1 }}
-              onMouseEnter={() => !c.future && setHover({ c, x: ci * (cell + gap) + cell / 2, y: ri * (cell + gap) + 18 })}
+              onMouseEnter={() => !c.future && !c.pad && setHover({ c, x: ci * (cell + gap) + cell / 2, y: ri * (cell + gap) + 18 })}
             />
           )),
         )}

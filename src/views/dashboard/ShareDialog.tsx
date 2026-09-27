@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { AppSnapshot, ShareCardData } from "../../api/types";
 import { IconClose, IconCopy, IconDownload } from "../../components/icons";
 import { Seg, Toggle } from "../../components/ui";
-import { formatTokens, formatUsd } from "../../lib/format";
+import { formatUsd } from "../../lib/format";
 import { buildCardModel, canvasToBase64, CARD_SIZE, cardFileName, copyCanvas, leanestWeek, renderCard, type CardOptions } from "../../share/cards";
 import { useApi, useSettings } from "../../state/store";
 
@@ -168,7 +168,7 @@ export function ShareDialog({ snap, onClose }: { snap: AppSnapshot; onClose: () 
             </button>
           </div>
           <div className="ts-label dialog__foot" role="status">
-            {status ?? `Rendered on this Mac. Nothing is uploaded.${share ? ` ${formatTokens(share.totalTokens)} tokens in the last 30 days.` : ""}`}
+            {status ?? "Rendered on this Mac. Nothing is uploaded."}
           </div>
         </div>
       </div>

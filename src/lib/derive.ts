@@ -209,7 +209,7 @@ export function progressCopy(t: TodayView): { lead: string; rest: string; pct: s
   if (t.goal <= 0) return { lead: "", rest: "No daily goal yet", pct: "" };
   if (t.met) {
     const over = t.tokens.total - t.goal;
-    return over > 0 ? { lead: `+${fmt(over)}`, rest: "past your goal · nicely done", pct } : { lead: "Goal lit", rest: "right on the mark", pct };
+    return over >= t.goal * 0.01 ? { lead: `+${fmt(over)}`, rest: "past your goal · nicely done", pct } : { lead: "Goal lit", rest: "right on the mark · nicely done", pct };
   }
   if (t.tokens.total === 0) return { lead: fmt(t.goal), rest: "to light today’s trail", pct };
   return { lead: fmt(t.remaining), rest: "to light today’s trail", pct };

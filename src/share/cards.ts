@@ -187,10 +187,12 @@ const PAL: Record<CardTheme, Palette> = {
 
 const TOOL_COL: Record<Tool, string> = { claude: "#F7995A", codex: "#EC5F80", gemini: "#8B6CF0" };
 
-function trailLayout(o: CardOptions, maxDays: number): Partial<TrailLayout> {
+function trailLayout(o: CardOptions, maxDays: number, chip: boolean): Partial<TrailLayout> {
+  // cards with a chip under the headline push the trail a little lower
+  const d = chip ? 0.05 : 0;
   return o.format === "story"
-    ? { baseY: 0.58, amp: 0.12, rise: 0.22, headX: 0.84, headR: 22, maxDays, top: 0.36, bottom: 0.72 }
-    : { baseY: 0.66, amp: 0.08, rise: 0.12, headX: 0.86, maxDays, top: 0.46, bottom: 0.82 };
+    ? { baseY: 0.6 + d, amp: 0.12, rise: 0.22, headX: 0.84, headR: 22, maxDays, top: 0.38 + d, bottom: 0.74 }
+    : { baseY: 0.66 + d, amp: 0.08, rise: 0.12, headX: 0.86, maxDays, top: 0.46 + d * 1.4, bottom: 0.82 };
 }
 
 function logo(c: CanvasRenderingContext2D, x: number, y: number, s: number): void {
@@ -276,7 +278,7 @@ export async function renderCard(model: CardModel, o: CardOptions): Promise<HTML
 
   // sky + trail
   const tc = document.createElement("canvas");
-  const trail = new Trail(tc, { theme: o.theme, variant: "card", layout: trailLayout(o, model.maxDays), seed: 7, size: { width: W, height: H, dpr: S }, reducedMotion: false });
+  const trail = new Trail(tc, { theme: o.theme, variant: "card", layout: trailLayout(o, model.maxDays, !!model.chip), seed: 7, size: { width: W, height: H, dpr: S }, reducedMotion: false });
   trail.setData(model.trail);
   trail.renderStill(3.4, 1.8);
   trail.destroy();
