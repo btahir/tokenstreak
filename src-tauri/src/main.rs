@@ -6,6 +6,19 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+/// Runs before `main` and before the first allocation, so the heap is
+/// labelled as app memory rather than as IOAccelerator (GPU) memory in
+/// `footprint`/`vmmap`. See `label_heap_memory`.
+#[cfg(target_os = "macos")]
+#[used]
+#[link_section = "__DATA,__mod_init_func"]
+static LABEL_HEAP: extern "C" fn() = {
+    extern "C" fn label() {
+        tokenstreak_core::engine::label_heap_memory();
+    }
+    label
+};
+
 fn main() {
     tokenstreak_lib::run()
 }

@@ -3,7 +3,7 @@
 //! used by the Tauri commands, the CLI and the tests.
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
@@ -29,6 +29,8 @@ pub struct ScanReport {
     /// Files that exist but could not be read (permissions, races).
     pub unreadable: usize,
     pub elapsed_ms: u128,
+    /// The scan used a thread pool (big scans only).
+    pub parallel: bool,
 }
 
 impl ScanReport {
@@ -56,6 +58,10 @@ pub struct Engine {
     /// Follow system time-zone changes (app engines without a pinned zone).
     follow_system_tz: bool,
     last_unreadable: usize,
+    /// When the parse cache was last written (see [`Engine::persist_lazy`]).
+    last_cache_write: Option<Instant>,
+    /// Hash of the state last written, so unchanged state isn't rewritten.
+    last_state_hash: Option<u64>,
 }
 
 /// A first scan split into batches, most recently modified files first, so
@@ -120,13 +126,39 @@ impl ScanPlan {
     }
 }
 
-/// Parses (or incrementally updates) records in parallel. Needs no engine,
+/// Minimum time between parse-cache writes during continuous activity.
+pub const CACHE_WRITE_GAP: Duration = Duration::from_secs(60);
+
+/// Scans with more changed files or bytes than this use a thread pool.
+const PARALLEL_MIN_FILES: usize = 16;
+const PARALLEL_MIN_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Parses (or incrementally updates) records, in parallel for big scans. Needs no engine,
 /// so callers can run it without holding the engine lock.
 pub fn parse_records(records: &mut [FileRecord]) -> ScanReport {
     let before: u64 = records.iter().map(|r| r.offset).sum();
-    let update = |rec: &mut FileRecord| -> Option<UpdateKind> {
-        let st = readers::stamp(&rec.path)?;
-        match readers::update_record(rec, st) {
+    let mut report = ScanReport { files: records.len(), ..Default::default() };
+    // Stat everything first (about 4 µs a file) and keep only the files
+    // that changed: while an agent writes, that is one or two.
+    let mut work: Vec<(&mut FileRecord, readers::Stamp)> = Vec::new();
+    let mut pending_bytes = 0u64;
+    for rec in records.iter_mut() {
+        let Some(st) = readers::stamp(&rec.path) else {
+            report.unreadable += 1;
+            continue;
+        };
+        if rec.parsed && rec.size == st.size && rec.mtime_ns == st.mtime_ns && rec.inode == st.inode {
+            continue;
+        }
+        pending_bytes += if rec.parsed && rec.inode == st.inode && st.size >= rec.size {
+            st.size - rec.offset
+        } else {
+            st.size
+        };
+        work.push((rec, st));
+    }
+    let update = |(rec, st): &mut (&mut FileRecord, readers::Stamp)| -> Option<UpdateKind> {
+        match readers::update_record(rec, *st) {
             Ok(k) => Some(k),
             Err(e) => {
                 tracing::debug!(kind = ?e.kind(), "log file unreadable");
@@ -134,18 +166,26 @@ pub fn parse_records(records: &mut [FileRecord]) -> ScanReport {
             }
         }
     };
-    // A short-lived pool: its threads (and their allocator caches) exit
-    // after the scan, so a big first scan leaves no memory behind.
-    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8);
-    let results: Vec<Option<UpdateKind>> = match rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
-        .thread_name(|i| format!("tokenstreak-scan-{i}"))
-        .build()
-    {
-        Ok(pool) => pool.install(|| records.par_iter_mut().map(update).collect()),
-        Err(_) => records.iter_mut().map(update).collect(),
+    report.parallel = work.len() > PARALLEL_MIN_FILES || pending_bytes > PARALLEL_MIN_BYTES;
+    let results: Vec<Option<UpdateKind>> = if !report.parallel {
+        // Incremental rescans run on the calling thread. Spawning a pool for
+        // them left each exited thread's allocator pages abandoned (and
+        // counted against the app) every few seconds while an agent wrote.
+        work.iter_mut().map(update).collect()
+    } else {
+        // A short-lived pool for big scans: its threads exit afterwards, and
+        // the caller hands their memory back (`release_memory`).
+        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8);
+        match rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|i| format!("tokenstreak-scan-{i}"))
+            .build()
+        {
+            Ok(pool) => pool.install(|| work.par_iter_mut().map(update).collect()),
+            Err(_) => work.iter_mut().map(update).collect(),
+        }
     };
-    let mut report = ScanReport { files: records.len(), ..Default::default() };
+    drop(work);
     for r in &results {
         match r {
             Some(UpdateKind::Appended) => report.appended += 1,
@@ -196,6 +236,8 @@ impl Engine {
             progressive: false,
             follow_system_tz: true,
             last_unreadable: 0,
+            last_cache_write: None,
+            last_state_hash: None,
         };
         e.roots = e.source_config().roots();
         e.status.initial_scan = e.files.is_empty();
@@ -223,6 +265,8 @@ impl Engine {
             progressive: false,
             follow_system_tz: false,
             last_unreadable: 0,
+            last_cache_write: None,
+            last_state_hash: None,
         };
         e.roots = e.source_config().roots();
         e
@@ -330,7 +374,7 @@ impl Engine {
         }
         self.files = next;
         report.elapsed_ms = t0.elapsed().as_millis();
-        if report.bytes_read > 64 * 1024 * 1024 {
+        if report.parallel || report.bytes_read > 64 * 1024 * 1024 {
             // Let the scan pool's threads exit, then hand their memory back.
             std::thread::sleep(std::time::Duration::from_millis(50));
             release_memory();
@@ -361,12 +405,22 @@ impl Engine {
 
     /// Scan + rebuild + persist. Returns whether anything changed.
     pub fn refresh(&mut self) -> ScanReport {
+        self.refresh_with(Duration::ZERO)
+    }
+
+    /// Scan + rebuild + [`Engine::persist_lazy`]: for the app's frequent
+    /// rescans while agents write.
+    pub fn refresh_lazy(&mut self) -> ScanReport {
+        self.refresh_with(CACHE_WRITE_GAP)
+    }
+
+    fn refresh_with(&mut self, cache_gap: Duration) -> ScanReport {
         let r = self.scan();
         if r.changed() || self.status.initial_scan {
             self.rebuild();
         }
         self.status.initial_scan = false;
-        self.persist();
+        self.persist_with(cache_gap);
         r
     }
 
@@ -491,17 +545,46 @@ impl Engine {
 
     /// Writes the cache (if changed) and state.
     pub fn persist(&mut self) {
+        self.persist_with(Duration::ZERO);
+    }
+
+    /// Like [`Engine::persist`], but writes the parse cache at most once per
+    /// [`CACHE_WRITE_GAP`]. While an agent writes, the app rescans every few
+    /// seconds, and rewriting the whole cache (MBs) each time cost memory,
+    /// CPU and disk writes for nothing: the cache only speeds up relaunch,
+    /// and a relaunch re-reads whatever it missed. Call [`Engine::persist`]
+    /// to flush (quit, idle poll).
+    pub fn persist_lazy(&mut self) {
+        self.persist_with(CACHE_WRITE_GAP);
+    }
+
+    /// Whether the parse cache has changes not yet on disk.
+    pub fn cache_dirty(&self) -> bool {
+        self.cache_dirty
+    }
+
+    fn persist_with(&mut self, gap: Duration) {
         if !self.persist_enabled {
             return;
         }
-        if self.cache_dirty {
+        let due = self.last_cache_write.is_none_or(|t| t.elapsed() >= gap);
+        if self.cache_dirty && due {
             if let Err(e) = crate::cache::save(&self.store.path(state::CACHE_FILE), &self.files) {
                 tracing::warn!("could not write cache: {e}");
             } else {
                 self.cache_dirty = false;
+                self.last_cache_write = Some(Instant::now());
             }
         }
-        let _ = self.store.save_state(&self.state);
+        let hash = serde_json::to_vec(&self.state).ok().map(|b| {
+            use std::hash::{Hash, Hasher};
+            let mut h = rustc_hash::FxHasher::default();
+            b.hash(&mut h);
+            h.finish()
+        });
+        if (hash.is_none() || hash != self.last_state_hash) && self.store.save_state(&self.state).is_ok() {
+            self.last_state_hash = hash;
+        }
     }
 
     fn computed(&self) -> report::Computed {
@@ -656,14 +739,14 @@ impl Engine {
                 self.state.celebrated_dates.drain(..n - 120);
             }
         }
-        self.persist();
+        self.persist_lazy();
     }
 
     pub fn acknowledge_achievements(&mut self, ids: &[String]) {
         for id in ids {
             self.state.seen_achievements.insert(id.clone());
         }
-        self.persist();
+        self.persist_lazy();
     }
 
     /// Stores newly computed unlocks (sticky) and returns achievements that
@@ -687,7 +770,7 @@ impl Engine {
         let now = crate::notify::Now::at(&self.clock, self.now_ms());
         let n = crate::notify::goal_notice(snap, &self.settings, &self.state, now)?;
         self.state.goal_notified_on = Some(snap.today.date.clone());
-        self.persist();
+        self.persist_lazy();
         Some(n)
     }
 
@@ -696,7 +779,7 @@ impl Engine {
         let now = crate::notify::Now::at(&self.clock, self.now_ms());
         let n = crate::notify::at_risk_notice(snap, &self.settings, &self.state, now)?;
         self.state.at_risk_notified_on = Some(snap.today.date.clone());
-        self.persist();
+        self.persist_lazy();
         Some(n)
     }
 
@@ -705,7 +788,7 @@ impl Engine {
         let now = crate::notify::Now::at(&self.clock, self.now_ms());
         let n = crate::notify::recap_notice(snap, &self.settings, &self.state, now)?;
         self.state.recap_sent_for = Some(n.week_start.clone());
-        self.persist();
+        self.persist_lazy();
         Some(n)
     }
 
@@ -738,6 +821,18 @@ impl Engine {
             }
             Err(e) => PriceRefreshResult { ok: false, pricing: self.pricing_info(), error: Some(e) },
         }
+    }
+}
+
+/// Tags the allocator's memory as application memory. mimalloc's default VM
+/// tag (100) is `VM_MEMORY_IOACCELERATOR`, so `footprint`, `vmmap` and
+/// Instruments reported the Rust heap as GPU memory. Call before the first
+/// allocation (a static initializer); later calls only affect new mappings.
+pub fn label_heap_memory() {
+    const VM_MEMORY_APPLICATION_SPECIFIC_1: std::os::raw::c_long = 240;
+    // SAFETY: plain FFI call that sets an integer option.
+    unsafe {
+        libmimalloc_sys::mi_option_set(libmimalloc_sys::mi_option_os_tag, VM_MEMORY_APPLICATION_SPECIFIC_1);
     }
 }
 
@@ -782,4 +877,79 @@ fn detect_codex_fast_tier(cfg: &SourceConfig) -> CodexDefaultTier {
         }
     }
     CodexDefaultTier::Standard
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::synth::{self, Rng, Scenario};
+
+    fn write_day(root: &Path, seed: u64, days: u32) {
+        let s = Scenario {
+            seed,
+            today: "2026-09-26".parse().unwrap(),
+            tz: jiff::tz::TimeZone::UTC,
+            days: days as _,
+            daily_goal: 2_000_000,
+            target: |r, _, g| (g as f64 * (0.5 + r.f64())) as u64,
+            tools: [0.6, 0.3, 0.1],
+            projects: vec!["alpha", "beta"],
+            now_hour: 20,
+            content_bytes: (200, 2_000),
+        };
+        let reqs = synth::requests(&s);
+        synth::write_logs(root, &reqs, &mut Rng::new(seed)).unwrap();
+    }
+
+    fn sources(root: &Path) -> SourceConfig {
+        let mut src = SourceConfig::from_env();
+        src.claude_dirs = Some(vec![root.join("claude")]);
+        src.codex_homes = Some(vec![root.join("codex")]);
+        src.gemini_dirs = Some(vec![root.join("gemini").join("tmp")]);
+        src
+    }
+
+    fn totals(e: &Engine) -> (usize, u64) {
+        (e.ledger().events.len(), e.ledger().events.iter().map(|ev| ev.total()).sum())
+    }
+
+    #[test]
+    fn small_rescans_run_inline_and_match_a_full_scan() {
+        let logs = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        write_day(logs.path(), 1, 60);
+        let mut e = Engine::open_with(data.path(), sources(logs.path()));
+        let first = e.refresh();
+        assert!(first.parallel, "a first scan of many files uses the pool");
+        write_day(logs.path(), 2, 1);
+        let next = e.refresh_lazy();
+        assert!(next.changed());
+        assert!(!next.parallel, "an incremental rescan runs on the calling thread");
+        let mut full = Engine::ephemeral(sources(logs.path()), Clock::utc());
+        full.scan();
+        full.rebuild();
+        assert_eq!(totals(&e), totals(&full));
+    }
+
+    #[test]
+    fn lazy_persist_throttles_cache_writes_and_persist_flushes() {
+        let logs = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        write_day(logs.path(), 1, 5);
+        let mut e = Engine::open_with(data.path(), sources(logs.path()));
+        e.refresh_lazy();
+        let cache = data.path().join(state::CACHE_FILE);
+        let written = std::fs::metadata(&cache).unwrap().len();
+        assert!(!e.cache_dirty(), "the first write is not delayed");
+        write_day(logs.path(), 2, 1);
+        assert!(e.refresh_lazy().changed());
+        assert!(e.cache_dirty(), "a second write within the gap waits");
+        assert_eq!(std::fs::metadata(&cache).unwrap().len(), written);
+        e.persist();
+        assert!(!e.cache_dirty());
+        assert!(std::fs::metadata(&cache).unwrap().len() > written);
+        // The flushed cache restores the same history on relaunch.
+        let reopened = Engine::open_with(data.path(), sources(logs.path()));
+        assert_eq!(totals(&reopened), totals(&e));
+    }
 }

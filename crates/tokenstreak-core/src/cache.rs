@@ -39,16 +39,31 @@ pub fn load(path: &Path) -> Option<Vec<FileRecord>> {
     opts().deserialize::<Body>(&bytes[15..]).ok().map(|b| b.files)
 }
 
+/// Streams the cache to disk (temp file, then rename) without building the
+/// whole body in memory first: it is several MB for a big history, and was
+/// serialized into two buffers on every rescan.
 pub fn save(path: &Path, files: &[FileRecord]) -> std::io::Result<()> {
     #[derive(Serialize)]
     struct BodyRef<'a> {
         files: &'a [FileRecord],
     }
-    let body = opts().serialize(&BodyRef { files }).map_err(std::io::Error::other)?;
-    let mut out = Vec::with_capacity(body.len() + 15);
-    out.write_all(MAGIC)?;
-    out.write_all(&FORMAT.to_le_bytes())?;
-    out.write_all(&PARSER_VERSION.to_le_bytes())?;
-    out.write_all(&body)?;
-    crate::state::write_atomic(path, &out)
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension(format!("bin.tmp-{}", std::process::id()));
+    let write = || -> std::io::Result<()> {
+        let mut out = std::io::BufWriter::with_capacity(256 * 1024, std::fs::File::create(&tmp)?);
+        out.write_all(MAGIC)?;
+        out.write_all(&FORMAT.to_le_bytes())?;
+        out.write_all(&PARSER_VERSION.to_le_bytes())?;
+        opts().serialize_into(&mut out, &BodyRef { files }).map_err(std::io::Error::other)?;
+        out.flush()
+    };
+    match write() {
+        Ok(()) => std::fs::rename(&tmp, path),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
 }

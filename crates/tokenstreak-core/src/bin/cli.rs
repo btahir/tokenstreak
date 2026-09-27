@@ -6,6 +6,7 @@
 //! tokenstreak-cli snapshot                                         AppSnapshot JSON for this machine
 //! tokenstreak-cli bench [--root DIR]                               cold parse timing
 //! tokenstreak-cli gen-logs --out DIR --mb N [--seed S]             synthetic native logs
+//! tokenstreak-cli live-logs --out DIR [--every-ms N] [--ticks N]    simulate an agent writing logs
 //! tokenstreak-cli gen-mock --out DIR [--today YYYY-MM-DD] [--tz Z] browser mock presets
 //! tokenstreak-cli prices import FILE                               compact a LiteLLM price file
 //! ```
@@ -135,6 +136,7 @@ fn main() {
             let written = gen_logs(&out, mb * 1024 * 1024, seed);
             println!("wrote {written} bytes to {}", out.display());
         }
+        "live-logs" => live_logs(&args),
         "gen-mock" => {
             let out = PathBuf::from(arg(&args, "--out").expect("--out DIR"));
             let tz_name = arg(&args, "--tz").unwrap_or_else(|| "America/Los_Angeles".into());
@@ -164,7 +166,7 @@ fn main() {
             println!("{}", t.to_compact_json());
         }
         _ => {
-            eprintln!("usage: tokenstreak-cli <daily|compare|snapshot|bench|gen-logs|gen-mock|prices import FILE> [--tz ZONE] [--tool T]");
+            eprintln!("usage: tokenstreak-cli <daily|compare|snapshot|bench|gen-logs|live-logs|gen-mock|prices import FILE> [--tz ZONE] [--tool T]");
         }
     }
 }
@@ -196,6 +198,49 @@ fn gen_logs(out: &std::path::Path, target_bytes: u64, seed: u64) -> u64 {
         round += 1;
     }
     total
+}
+
+/// Simulates an active agent session for memory and CPU measurements: every
+/// `--every-ms` (default 2000) it writes a small batch of synthetic native
+/// logs dated today (local zone) under `--out`, whose `claude`, `codex` and
+/// `gemini/tmp` folders are what the app should watch. `--ticks N` stops
+/// after N batches (default: run until killed); `--goal` sets the tokens per
+/// batch (default 400000) and `--content-kb MIN,MAX` the transcript bytes per
+/// request (default 2–12 KB), to mimic tool output.
+fn live_logs(args: &[String]) {
+    use tokenstreak_core::synth::{self, Rng, Scenario};
+    let out = PathBuf::from(arg(args, "--out").expect("--out DIR"));
+    let every = std::time::Duration::from_millis(arg(args, "--every-ms").and_then(|s| s.parse().ok()).unwrap_or(2000));
+    let ticks: u64 = arg(args, "--ticks").and_then(|s| s.parse().ok()).unwrap_or(u64::MAX);
+    let seed: u64 = arg(args, "--seed").and_then(|s| s.parse().ok()).unwrap_or(1000);
+    let goal: u64 = arg(args, "--goal").and_then(|s| s.parse().ok()).unwrap_or(400_000);
+    let kb: Vec<usize> =
+        arg(args, "--content-kb").map(|s| s.split(',').filter_map(|p| p.trim().parse().ok()).collect()).unwrap_or_default();
+    let content = match kb.as_slice() {
+        [lo, hi, ..] => (lo * 1024, (*hi).max(*lo) * 1024),
+        [n] => (n * 1024, n * 1024),
+        _ => (2_000, 12_000),
+    };
+    for tick in 0..ticks {
+        let now = jiff::Zoned::now();
+        let s = Scenario {
+            seed: seed + tick,
+            today: now.date(),
+            tz: now.time_zone().clone(),
+            days: 1,
+            daily_goal: goal,
+            target: |r, _, g| (g as f64 * (0.5 + r.f64())) as u64,
+            tools: [0.6, 0.3, 0.1],
+            projects: vec!["alpha", "beta"],
+            now_hour: now.hour() as _,
+            content_bytes: content,
+        };
+        let reqs = synth::requests(&s);
+        let mut rng = Rng::new(seed + tick);
+        synth::write_logs(&out, &reqs, &mut rng).expect("write logs");
+        eprintln!("tick {tick}: {} requests", reqs.len());
+        std::thread::sleep(every);
+    }
 }
 
 fn dir_size(p: &std::path::Path) -> u64 {
