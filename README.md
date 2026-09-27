@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source srcset="docs/media/hero.webp" type="image/webp">
-    <img src="docs/media/hero.gif" width="1000" alt="The Trail on a 126-day streak: today's count climbs to its 20M goal, the comet at the head of a long ribbon of light fills its halo and ignites, a shockwave rolls out and the streak ticks from 125 to 126 days.">
-  </picture>
+  <img src="docs/media/hero.webp" width="1000" alt="The Trail on a 126-day streak: today's count climbs to its 20M goal, the comet at the head of a long ribbon of light fills its halo and ignites, a shockwave rolls out and the streak ticks from 125 to 126 days.">
 </p>
 
 <p align="center">
