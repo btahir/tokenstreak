@@ -117,7 +117,14 @@ pub fn create(app: &AppHandle) -> tauri::Result<TrayIcon> {
 /// Turns launch at login on or off, keeping the menu check mark, the saved
 /// setting and the UI in sync.
 pub fn set_launch_at_login(app: &AppHandle, on: bool) {
-    let r = if on { app.autolaunch().enable() } else { app.autolaunch().disable() };
+    let r = if crate::qa::enabled() {
+        tracing::info!(on, "QA mode: login item not changed");
+        Ok(())
+    } else if on {
+        app.autolaunch().enable()
+    } else {
+        app.autolaunch().disable()
+    };
     if let Err(e) = r {
         tracing::warn!(error = %e, "launch at login could not be changed");
     }

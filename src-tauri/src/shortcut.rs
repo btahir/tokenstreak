@@ -39,6 +39,10 @@ pub fn parse(accelerator: &str) -> Result<Shortcut, String> {
 /// `None`. On failure the previous shortcut stays registered.
 pub fn apply(app: &AppHandle, accelerator: Option<&str>) -> Result<(), String> {
     let next = accelerator.map(parse).transpose()?;
+    if crate::qa::enabled() {
+        tracing::info!(enabled = next.is_some(), "QA mode: global shortcut not registered");
+        return Ok(());
+    }
     let gs = app.global_shortcut();
     let mut current = CURRENT.lock();
     if *current == next {

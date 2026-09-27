@@ -3,6 +3,7 @@
 
 mod commands;
 mod logging;
+mod qa;
 mod shortcut;
 mod system;
 mod tray;
@@ -36,10 +37,16 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
     // `TOKENSTREAK_DATA_DIR` points the app at another data folder (QA,
-    // measurements, demos) without touching the real one.
-    let data_dir = match std::env::var_os("TOKENSTREAK_DATA_DIR").filter(|v| !v.is_empty()) {
-        Some(d) => std::path::PathBuf::from(d),
-        None => app.path().app_data_dir()?,
+    // measurements, demos) without touching the real one. QA mode never
+    // uses the real one.
+    let data_dir = if qa::enabled() {
+        tracing::info!("QA mode: no login item, notifications or global shortcut");
+        qa::data_dir()
+    } else {
+        match std::env::var_os("TOKENSTREAK_DATA_DIR").filter(|v| !v.is_empty()) {
+            Some(d) => std::path::PathBuf::from(d),
+            None => app.path().app_data_dir()?,
+        }
     };
     std::fs::create_dir_all(&data_dir)?;
     // Opening restores the incremental cache, so the first snapshot is instant.
@@ -75,6 +82,20 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     if first_run {
         tray::show_dashboard(app.handle());
     }
+    // Launch flags on the first launch too (QA scripts): once the popover page has loaded.
+    let args: Vec<String> = std::env::args().collect();
+    let debug = qa::parse(&args);
+    let popover = args.iter().any(|a| a == "--popover");
+    if popover || !debug.is_empty() {
+        let handle = app.handle().clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            if popover {
+                tray::toggle_popover(&handle);
+            }
+            qa::run(&handle, debug);
+        });
+    }
     Ok(())
 }
 
@@ -107,6 +128,11 @@ pub fn run() {
             // A second launch opens the dashboard (e.g. from Finder), or does
             // what its flag asks, so launchers and scripts can drive the app:
             // `open -a Tokenstreak --args --popover | --settings | --refresh | --quit`.
+            let debug = qa::parse(&args);
+            if !debug.is_empty() {
+                qa::run(app, debug);
+                return;
+            }
             match second_launch_action(&args) {
                 Action::Popover => tray::toggle_popover(app),
                 Action::Settings => tray::show_settings(app),

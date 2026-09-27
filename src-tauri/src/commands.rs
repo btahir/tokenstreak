@@ -46,7 +46,9 @@ pub fn update_settings(app: AppHandle, core: State<'_, Core>, mut patch: serde_j
         shortcut::apply(&app, preview.popover_shortcut.as_deref())?;
     }
     let after = core.engine.lock().update_settings(&patch)?;
-    if after.launch_at_login != before.launch_at_login {
+    if after.launch_at_login != before.launch_at_login && crate::qa::enabled() {
+        tracing::info!(on = after.launch_at_login, "QA mode: login item not changed");
+    } else if after.launch_at_login != before.launch_at_login {
         let r = if after.launch_at_login { app.autolaunch().enable() } else { app.autolaunch().disable() };
         if let Err(e) = r {
             tracing::warn!(error = %e, "launch at login could not be changed");

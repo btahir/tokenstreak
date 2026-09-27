@@ -277,6 +277,10 @@ fn emit_snapshot(app: &AppHandle, snap: &AppSnapshot) {
 }
 
 fn notify(app: &AppHandle, title: &str, body: &str) {
+    if crate::qa::enabled() {
+        tracing::info!(title, "QA mode: notification not shown");
+        return;
+    }
     if let Err(e) = app.notification().builder().title(title).body(body).show() {
         tracing::warn!(error = %e, "notification failed");
     }
