@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source srcset="docs/media/hero.webp" type="image/webp">
-    <img src="docs/media/hero.gif" width="1000" alt="Tokenstreak's first-run reveal: a count of 185 million tokens climbs while a ribbon of light draws itself across a dusk sky and ignites at its head.">
+    <img src="docs/media/hero.gif" width="1000" alt="The Trail on a 126-day streak: today's count climbs to its 20M goal, the comet at the head of a long ribbon of light fills its halo and ignites, a shockwave rolls out and the streak ticks from 125 to 126 days.">
   </picture>
 </p>
 
@@ -93,9 +93,11 @@ The Trail is your streak, drawn as a streak of light. Every mark on it means som
 | **Width** | Tokens that day against your goal. A big day swells the ribbon. |
 | **Strands** | Your agent mix: apricot for Claude Code, rose for Codex, violet for Gemini, braided in proportion. |
 | **Core** | Efficiency. In the current run, the more of a day served from cache, the whiter its core burns. |
-| **Brightness** | Goal days glow. The current run is brightest; older history stays in the sky as a slimmer, calmer ribbon. |
-| **Gaps** | A day with no tokens is a clean break with a single ember. Rest days and spent freezes keep a thinner bridge of light. |
+| **Brightness** | Goal days glow. The current run burns brightest; older history stays in the sky as a slimmer, calmer ribbon. |
+| **Gaps** | Days off. A day with no tokens is a clean break with a single ember; rest days and spent freezes keep a thinner bridge of light. |
 | **The comet** | Today. Its halo ring fills as you approach the goal and ignites when you hit it. |
+
+Over long ranges the axis bends: the current run and the two weeks before it keep at least a third of the width, and older history is compressed. When days get too narrow to show every gap, the ribbon only breaks for empty stretches and the legend switches from *gaps = days off* to *bright = goal days*.
 
 The sky changes with your streak, from *Kindling* to *Ember*, *Glow* (7 days, milestone stars appear), *Comet* (30), *Aurora* (100, curtains of light above the horizon) and *Halo* (365). The horizon warms as today's progress grows.
 
