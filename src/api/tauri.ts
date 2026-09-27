@@ -14,6 +14,7 @@ import type {
   Settings,
   ShareCardData,
   ShareOptions,
+  Tool,
 } from "./types";
 
 export function createTauriApi(): TokenstreakApi {
@@ -38,6 +39,9 @@ export function createTauriApi(): TokenstreakApi {
     setPopoverHeight: (height: number) => invoke<void>("set_popover_height", { height }),
     quit: () => invoke<void>("quit_app"),
     openExternal: (url: string) => invoke<void>("open_external", { url }),
+    locateTool: (tool: Tool) => invoke<Settings | null>("locate_tool", { tool }),
+    openSettings: () => invoke<void>("open_settings"),
+    revealLogs: () => invoke<void>("reveal_logs"),
     on<E extends keyof ApiEvents>(event: E, cb: (payload: ApiEvents[E]) => void): Unsubscribe {
       let active = true;
       let unlisten: (() => void) | undefined;

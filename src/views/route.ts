@@ -37,6 +37,7 @@ export async function openDashboardAt(api: TokenstreakApi, route: Route): Promis
     window.location.href = u.toString();
     return;
   }
-  await api.openDashboard();
+  if (route === "settings") await api.openSettings();
+  else await api.openDashboard();
   await api.hidePopover();
 }

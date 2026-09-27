@@ -6,19 +6,18 @@ import type { AppSnapshot, ShareCardData } from "../../api/types";
 import { IconClose, IconCopy, IconDownload } from "../../components/icons";
 import { Seg, Toggle } from "../../components/ui";
 import { formatTokens, formatUsd } from "../../lib/format";
-import { useResolvedTheme } from "../../lib/theme";
 import { buildCardModel, canvasToBase64, CARD_SIZE, cardFileName, copyCanvas, leanestWeek, renderCard, type CardOptions } from "../../share/cards";
 import { useApi, useSettings } from "../../state/store";
 
 export function ShareDialog({ snap, onClose }: { snap: AppSnapshot; onClose: () => void }) {
   const api = useApi();
   const settings = useSettings();
-  const theme = useResolvedTheme();
   const [o, setO] = useState<CardOptions>(() => ({
     template: "streak",
     format: "square",
-    theme: new URLSearchParams(location.search).get("card") === "light" ? "light" : new URLSearchParams(location.search).get("card") === "dark" ? "dark" : theme === "dark" ? "dark" : "dark",
-    showMix: true,
+    // Dusk cards are the most shareable, so dark is the default (?card=light for screenshots).
+    theme: new URLSearchParams(location.search).get("card") === "light" ? "light" : "dark",
+    showMix: settings?.share.showAgentMix ?? true,
     showCost: settings?.share.showCost ?? false,
     showProjects: settings?.share.showProjectNames ?? false,
   }));

@@ -11,6 +11,8 @@ import type {
   GoalsInput,
   PriceRefreshResult,
   RangeQuery,
+  ScanProgress,
+  Tool,
   Settings,
   ShareCardData,
   ShareOptions,
@@ -36,6 +38,12 @@ export interface ApiEvents {
   "popover-shown": null;
   "popover-hidden": null;
   "dashboard-shown": null;
+  /** Full settings after any change (from either window or the tray). */
+  settings: Settings;
+  /** First-scan progress (partial snapshots stream meanwhile). */
+  "scan-progress": ScanProgress;
+  /** The dashboard (already open) should show Settings. */
+  "open-settings": null;
 }
 
 export type Unsubscribe = () => void;
@@ -76,6 +84,12 @@ export interface TokenstreakApi {
   quit(): Promise<void>;
   /** Opens an https URL in the default browser. */
   openExternal(url: string): Promise<void>;
+  /** Native folder picker for a tool's log folder; resolves to the new settings, or null on cancel. */
+  locateTool(tool: Tool): Promise<Settings | null>;
+  /** Opens the dashboard on Settings. */
+  openSettings(): Promise<void>;
+  /** Reveals the app's log file in Finder ("Report a problem"). */
+  revealLogs(): Promise<void>;
 
   on<E extends keyof ApiEvents>(event: E, cb: (payload: ApiEvents[E]) => void): Unsubscribe;
 }

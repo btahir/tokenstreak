@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AppInfo, AppSnapshot, MenuBarDisplay, Settings, Theme, Tool } from "../../api/types";
-import { IconExternal, IconHeart, IconLock, IconPlay, IconRefresh, LogoMark } from "../../components/icons";
+import { IconExternal, IconFolder, IconHeart, IconLock, IconPlay, IconRefresh, LogoMark } from "../../components/icons";
 import { Card, Chip, Glyph, Seg, Toggle } from "../../components/ui";
 import { REPO_URL, SUPPORT_URL } from "../../config";
 import { baseline, goalPresets } from "../../lib/derive";
@@ -43,6 +43,9 @@ export function SettingsPage({ snap }: { snap: AppSnapshot }) {
             <Row title="Show estimated cost on cards" desc="Off by default. Costs are estimates, not bills.">
               <Toggle label="Show estimated cost on cards" on={settings.share.showCost} onChange={(v) => set({ share: { showCost: v } })} />
             </Row>
+            <Row title="Show agent mix on cards" desc="The Claude · Codex · Gemini split along the bottom.">
+              <Toggle label="Show agent mix on cards" on={settings.share.showAgentMix ?? true} onChange={(v) => set({ share: { showAgentMix: v } })} />
+            </Row>
           </Card>
         </div>
         <div className="set__col">
@@ -74,6 +77,9 @@ export function SettingsPage({ snap }: { snap: AppSnapshot }) {
                 ]}
               />
             </Row>
+            <Row title="Popover shortcut" desc="A global key combo that opens Tokenstreak from anywhere.">
+              <ShortcutField value={settings.popoverShortcut ?? null} />
+            </Row>
             <Row title="Weeks start on">
               <Seg
                 label="Weeks start on"
@@ -92,9 +98,17 @@ export function SettingsPage({ snap }: { snap: AppSnapshot }) {
             <Row title="Achievements" desc="When a new badge unlocks.">
               <Toggle label="Achievement notifications" on={settings.notifications.achievements} onChange={(v) => set({ notifications: { achievements: v } })} />
             </Row>
-            <Row title="Evening nudge" desc="At 8 pm, only if a streak of 3+ days is at risk. Off by default.">
+            <Row title="Evening nudge" desc={`At ${clock(settings.notifications.reminderTime ?? "20:00")}, only if a streak is at risk. Never on rest days. Off by default.`}>
               <Toggle label="Evening nudge" on={settings.notifications.streakAtRisk} onChange={(v) => set({ notifications: { streakAtRisk: v } })} />
             </Row>
+            <Row title="Weekly recap" desc="A short note about last week on the first morning of the new one.">
+              <Toggle label="Weekly recap" on={settings.notifications.weeklyRecap ?? false} onChange={(v) => set({ notifications: { weeklyRecap: v } })} />
+            </Row>
+            {settings.notifications.quietHours && (
+              <Row title="Quiet hours" desc={`No notifications from ${clock(settings.notifications.quietHours.start)} to ${clock(settings.notifications.quietHours.end)}.`}>
+                <Toggle label="Quiet hours" on={settings.notifications.quietHours.enabled} onChange={(v) => set({ notifications: { quietHours: { enabled: v } } })} />
+              </Row>
+            )}
           </Card>
           <DataCard snap={snap} settings={settings} info={info} set={set} />
         </div>
@@ -267,8 +281,71 @@ function CustomInput({ draft, setDraft, onSubmit, onCancel, label }: { draft: st
 
 /* ---------------- sound ---------------- */
 
+const MOD_SYMBOL: Record<string, string> = { CmdOrCtrl: "⌘", Command: "⌘", Cmd: "⌘", Control: "⌃", Ctrl: "⌃", Alt: "⌥", Option: "⌥", Shift: "⇧" };
+
+/** "Alt+Shift+T" -> "⌥⇧T". */
+export function prettyShortcut(acc: string): string {
+  return acc
+    .split("+")
+    .map((k) => MOD_SYMBOL[k] ?? (k.length === 1 ? k.toUpperCase() : k))
+    .join("");
+}
+
+/** Builds a Tauri accelerator from a keydown, or null while only modifiers are held. */
+export function acceleratorFrom(e: Pick<KeyboardEvent, "metaKey" | "ctrlKey" | "altKey" | "shiftKey" | "code">): string | null {
+  const key = /^Key([A-Z])$/.exec(e.code)?.[1] ?? /^Digit(\d)$/.exec(e.code)?.[1] ?? (/^F\d{1,2}$/.test(e.code) ? e.code : e.code === "Space" ? "Space" : null);
+  if (!key) return null;
+  const mods = [e.metaKey && "CmdOrCtrl", e.ctrlKey && "Control", e.altKey && "Alt", e.shiftKey && "Shift"].filter(Boolean) as string[];
+  if (!mods.length && !/^F\d/.test(key)) return null;
+  return [...mods, key].join("+");
+}
+
+function ShortcutField({ value }: { value: string | null }) {
+  const [recording, setRecording] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (!recording) return;
+    const onKey = async (e: KeyboardEvent) => {
+      e.preventDefault();
+      if (e.key === "Escape") return setRecording(false);
+      const acc = acceleratorFrom(e);
+      if (!acc) return;
+      setRecording(false);
+      try {
+        await updateSettings({ popoverShortcut: acc });
+        setErr(null);
+      } catch (x) {
+        setErr(String(x).replace(/^Error:\s*/, ""));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [recording]);
+  return (
+    <div className="shortcut">
+      <button type="button" className={`btn shortcut__key${recording ? " is-rec" : ""}`} onClick={() => setRecording(true)} data-testid="shortcut">
+        {recording ? "Press keys…" : value ? prettyShortcut(value) : "Record shortcut"}
+      </button>
+      {value && !recording && (
+        <button type="button" className="btn btn--ghost" onClick={() => void updateSettings({ popoverShortcut: "" })} aria-label="Clear shortcut">
+          Clear
+        </button>
+      )}
+      {err && <span className="srow__err shortcut__err">{err}</span>}
+    </div>
+  );
+}
+
+/** "20:00" -> "8 pm", "07:30" -> "7:30 am". */
+export function clock(hhmm: string): string {
+  const [h = 0, m = 0] = hhmm.split(":").map(Number);
+  const hr = h % 12 === 0 ? 12 : h % 12;
+  return `${hr}${m ? `:${String(m).padStart(2, "0")}` : ""} ${h < 12 ? "am" : "pm"}`;
+}
+
 function SoundRows({ settings, set }: { settings: Settings; set: (p: Parameters<typeof updateSettings>[0]) => void }) {
-  const [vol, setVol] = useState(getVolume());
+  const [vol, setVol] = useState(settings.soundVolume ?? getVolume());
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   return (
     <>
       <Row title="Play sounds" desc="Soft glass chimes for goal lit, milestones and unlocks. Off by default.">
@@ -287,6 +364,8 @@ function SoundRows({ settings, set }: { settings: Settings; set: (p: Parameters<
               const v = Number(e.target.value) / 100;
               setVol(v);
               setVolume(v);
+              clearTimeout(timer.current);
+              timer.current = setTimeout(() => set({ soundVolume: v }), 300);
             }}
           />
           <button type="button" className="btn" onClick={() => playCue("goal", true)}>
@@ -346,7 +425,9 @@ function DataCard({ snap, settings, info, set }: { snap: AppSnapshot; settings: 
             {s?.found ? (
               <Toggle label={`Read ${TOOL_NAMES[tool]} logs`} on={enabled} onChange={(v) => set({ tools: { [tool]: { enabled: v } } })} />
             ) : (
-              <span className="srow__muted">Not installed</span>
+              <button type="button" className="btn" onClick={() => api && void api.locateTool(tool)} data-testid={`locate-${tool}`}>
+                <IconFolder size={13} /> Locate…
+              </button>
             )}
           </Row>
         );
@@ -416,6 +497,9 @@ function AboutCard({ info }: { info: AppInfo | null }) {
       <div className="about__links">
         <button type="button" className="btn" onClick={() => open(REPO_URL)}>
           GitHub <IconExternal />
+        </button>
+        <button type="button" className="btn btn--ghost" onClick={() => api && void api.revealLogs()} title="Shows the app log (counts and timings only) in Finder">
+          Report a problem
         </button>
         <button type="button" className="btn btn--support" onClick={() => open(SUPPORT_URL)}>
           <IconHeart /> Support this project

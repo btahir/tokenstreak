@@ -5,12 +5,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "../../api";
 import type { AppSnapshot } from "../../api/types";
 import { IconCheck, IconLock } from "../../components/icons";
-import { Glyph, Toggle, useCountUp } from "../../components/ui";
+import { Glyph, Progress, Toggle, useCountUp } from "../../components/ui";
 import { baseline, buildTrailData, goalPresets, revealFacts, simulateGoal } from "../../lib/derive";
 import { addDays, formatDay, formatDayYear, formatPercent, formatTokens, plural, splitUnit, TOOL_NAMES } from "../../lib/format";
 import { setSoundEnabled } from "../../lib/sound";
 import { useReducedMotion, useResolvedTheme } from "../../lib/theme";
-import { setState, updateSettings, useApi, useSettings } from "../../state/store";
+import { setState, updateSettings, useApi, useAppState, useSettings } from "../../state/store";
 import { TrailCanvas } from "../../trail/TrailCanvas";
 import { DAY0, toolDays } from "../popover/FirstRun";
 
@@ -59,6 +59,9 @@ function Detect({ snap, next }: { snap: AppSnapshot; next: () => void }) {
   }, [reduced]);
   const activeDays = snap.days.filter((d) => d.total > 0).length;
   const anyFound = tools.some((t) => t.found && t.used);
+  const sp = useAppState((s) => s.scanProgress);
+  const scanning = snap.status.initialScan;
+  const pct = sp && sp.bytesTotal > 0 ? sp.bytesDone / sp.bytesTotal : sp && sp.filesTotal > 0 ? sp.filesDone / sp.filesTotal : 0;
   return (
     <div className="onb__pane">
       <div className="onb__left">
@@ -97,13 +100,21 @@ function Detect({ snap, next }: { snap: AppSnapshot; next: () => void }) {
             );
           })}
         </div>
+        {scanning && (
+          <div className="onb__scan" data-testid="scan-progress">
+            <Progress value={pct} label="Reading your history" />
+            <span className="ts-label">
+              Reading your history{sp ? ` · ${sp.filesDone.toLocaleString("en-US")} of ${sp.filesTotal.toLocaleString("en-US")} files` : "…"}
+            </span>
+          </div>
+        )}
         <div className="privacy onb__privacy">
           <IconLock />
           <span>Only token counts, model names, timestamps and project folder names are read. Never prompts, code or responses. Nothing leaves this Mac.</span>
         </div>
         <div className="onb__foot">
           <span className="ts-label">{resolved >= 3 ? (anyFound ? `Found ${plural(activeDays, "day")} of history` : "No usage yet. Your trail starts today.") : "Looking…"}</span>
-          <button type="button" className="btn btn--glow btn--lg" onClick={next} disabled={resolved < 3} data-testid="onb-next">
+          <button type="button" className="btn btn--glow btn--lg" onClick={next} disabled={resolved < 3 || scanning} data-testid="onb-next">
             {anyFound ? "Show me my history" : "Continue"}
           </button>
         </div>

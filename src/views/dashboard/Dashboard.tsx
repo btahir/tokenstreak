@@ -25,7 +25,8 @@ const NAV: { route: Route; label: string; icon: React.ReactNode }[] = [
 ];
 
 function initialRoute(): Route {
-  const q = new URLSearchParams(location.search).get("page") as Route | null;
+  const p = new URLSearchParams(location.search);
+  const q = (p.get("page") ?? p.get("section")) as Route | null;
   if (q && ROUTES.includes(q)) return q;
   return takeRequestedRoute() ?? "overview";
 }
@@ -45,11 +46,13 @@ export function Dashboard() {
       if (r) setRoute(r);
     };
     const off = api.on("dashboard-shown", take);
+    const offSettings = api.on("open-settings", () => setRoute("settings"));
     const onStorage = (e: StorageEvent) => e.key === "tokenstreak.route" && e.newValue && take();
     window.addEventListener("storage", onStorage);
     window.addEventListener("focus", take);
     return () => {
       off();
+      offSettings();
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("focus", take);
     };

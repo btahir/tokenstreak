@@ -10,6 +10,7 @@ import {
   cacheShareOf,
   celebrationLine,
   dailyBars,
+  dayCacheShare,
   efficiency,
   efficiencyWord,
   goalPresets,
@@ -28,7 +29,7 @@ import {
 const snap = (p: unknown) => structuredClone((p as MockPreset).snapshot) as AppSnapshot;
 
 function row(date: string, total: number, extra: Partial<DayRow> = {}): DayRow {
-  return { date, total, cost: total / 1e6, claude: total, codex: 0, gemini: 0, cacheRead: total * 0.9, messages: 1, sessions: 1, goal: 100, met: total >= 100, streak: 0, ...extra };
+  return { date, total, cost: total / 1e6, claude: total, codex: 0, gemini: 0, cacheRead: total * 0.9, input: total * 0.02, cacheWrite: total * 0.05, messages: 1, sessions: 1, goal: 100, met: total >= 100, streak: 0, ...extra };
 }
 
 describe("buildTrailData", () => {
@@ -185,6 +186,14 @@ describe("goals", () => {
     expect(f.total).toBe(s.lifetime.tokens.total);
     expect(f.daysShowedUp).toBeGreaterThan(0);
     expect(f.busiest!.total).toBe(Math.max(...s.days.map((d) => d.total)));
+  });
+});
+
+describe("dayCacheShare", () => {
+  it("is exact with the input split and approximate without it", () => {
+    expect(dayCacheShare({ total: 100, cacheRead: 90, input: 5, cacheWrite: 5 })).toBeCloseTo(0.9, 6);
+    expect(dayCacheShare({ total: 100, cacheRead: 80 })).toBeCloseTo(0.8, 6);
+    expect(dayCacheShare({ total: 0, cacheRead: 0 })).toBe(0);
   });
 });
 

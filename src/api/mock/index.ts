@@ -211,10 +211,12 @@ export async function createMockApi(opts: MockOptions): Promise<TokenstreakApi> 
         recompute();
       }
       publish();
+      emit("settings", structuredClone(settings));
       return structuredClone(settings);
     },
     async setGoals(goals) {
       applyGoals(goals);
+      emit("settings", structuredClone(settings));
       return publish();
     },
     async completeOnboarding(goals) {
@@ -277,6 +279,19 @@ export async function createMockApi(opts: MockOptions): Promise<TokenstreakApi> 
     async openExternal(url) {
       window.open(url, "_blank", "noopener");
     },
+    async locateTool(tool) {
+      await sleep(300);
+      settings = deepMerge(settings, { tools: { [tool]: { enabled: true, customPaths: [`/Users/you/logs/${tool}`] } } });
+      emit("settings", structuredClone(settings));
+      return structuredClone(settings);
+    },
+    async openSettings() {
+      const u = new URL(window.location.href);
+      u.searchParams.set("view", "dashboard");
+      u.searchParams.set("section", "settings");
+      window.location.href = u.toString();
+    },
+    async revealLogs() {},
     on<E extends keyof ApiEvents>(event: E, cb: (payload: ApiEvents[E]) => void): Unsubscribe {
       const set = listeners.get(event) ?? new Set<Listener>();
       set.add(cb as Listener);

@@ -7,8 +7,14 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { getApi, isTauri } from "../api";
-import { setSoundEnabled } from "../lib/sound";
-import type { Achievement, AppSnapshot, Breakdown, Celebration, RangeQuery, Settings, TokenstreakApi } from "../api";
+import { setSoundEnabled, setVolume } from "../lib/sound";
+import type { Settings as S } from "../api";
+
+function applySound(s: S): void {
+  setSoundEnabled(s.sound);
+  if (typeof s.soundVolume === "number" && s.soundVolume > 0) setVolume(s.soundVolume);
+}
+import type { Achievement, AppSnapshot, Breakdown, Celebration, RangeQuery, ScanProgress, Settings, TokenstreakApi } from "../api";
 
 export interface AppState {
   api: TokenstreakApi | null;
@@ -22,6 +28,8 @@ export interface AppState {
   popoverShownCount: number;
   /** The popover window is on screen (Tauri: between popover-shown and popover-hidden; browser: always). */
   popoverVisible: boolean;
+  /** Latest first-scan progress, if a first scan is running. */
+  scanProgress: ScanProgress | null;
   error: string | null;
 }
 
@@ -33,6 +41,7 @@ let state: AppState = {
   unlocked: [],
   popoverShownCount: 0,
   popoverVisible: !isTauri(),
+  scanProgress: null,
   error: null,
 };
 const subs = new Set<() => void>();
@@ -70,7 +79,7 @@ export function startStore(): void {
         setState({ popoverShownCount: getState().popoverShownCount + 1, popoverVisible: true });
         // Settings may have changed in the dashboard window; there is no settings event.
         void api.getSettings().then((settings) => {
-          setSoundEnabled(settings.sound);
+          applySound(settings);
           setState({ settings });
         });
       });
@@ -78,8 +87,13 @@ export function startStore(): void {
         void api.getSettings().then((settings) => setState({ settings }));
       });
       api.on("popover-hidden", () => setState({ popoverVisible: false }));
+      api.on("settings", (settings) => {
+        applySound(settings);
+        setState({ settings });
+      });
+      api.on("scan-progress", (scanProgress) => setState({ scanProgress }));
       const [snapshot, settings] = await Promise.all([api.getSnapshot(), api.getSettings()]);
-      setSoundEnabled(settings.sound);
+      applySound(settings);
       performance.mark("ts:data");
       setState({ snapshot, settings, celebration: snapshot.celebration });
     })
@@ -117,7 +131,7 @@ export async function updateSettings(patch: Parameters<TokenstreakApi["updateSet
   const api = state.api;
   if (!api) return;
   const settings = await api.updateSettings(patch);
-  setSoundEnabled(settings.sound);
+  applySound(settings);
   setState({ settings });
 }
 

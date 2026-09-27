@@ -8,8 +8,15 @@ import { addDays, friendlyGoal, parseDate } from "./format";
 
 /* ---------------- per-day helpers ---------------- */
 
-/** Approximate cache share for a day row (cacheRead / total; rows carry no input split). */
-export function dayCacheShare(d: Pick<DayRow, "cacheRead" | "total">): number {
+/**
+ * Cache share for a day row: cacheRead / (input + cacheRead + cacheWrite) when
+ * the row carries the split, else cacheRead / total as an approximation.
+ */
+export function dayCacheShare(d: Pick<DayRow, "cacheRead" | "total"> & Partial<Pick<DayRow, "input" | "cacheWrite">>): number {
+  if (d.input !== undefined && d.cacheWrite !== undefined) {
+    const denom = d.input + d.cacheRead + d.cacheWrite;
+    return denom > 0 ? Math.min(1, d.cacheRead / denom) : 0;
+  }
   return d.total > 0 ? Math.min(1, d.cacheRead / d.total) : 0;
 }
 
@@ -130,6 +137,8 @@ export function weekOrbs(snap: AppSnapshot): Orb[] {
 export interface Baseline {
   activeDays: number;
   cacheShare: number;
+  /** cacheShare uses the exact definition (rows carry input/cacheWrite). */
+  exactCache: boolean;
   costPerMillion: number;
   medianTokens: number;
   sessionLow: number;
@@ -151,11 +160,14 @@ export function baseline(days: DayRow[], today: string, n = 30): Baseline {
   const tokens = act.reduce((a, d) => a + d.total, 0);
   const cost = act.reduce((a, d) => a + d.cost, 0);
   const cache = act.reduce((a, d) => a + d.cacheRead, 0);
+  const split = act.length > 0 && act.every((d) => d.input !== undefined && d.cacheWrite !== undefined);
+  const cacheDenom = split ? act.reduce((a, d) => a + d.input + d.cacheRead + d.cacheWrite, 0) : tokens;
   const perSession = act.filter((d) => d.sessions > 0).map((d) => d.total / d.sessions).sort((a, b) => a - b);
   const totals = act.map((d) => d.total).sort((a, b) => a - b);
   return {
     activeDays: act.length,
-    cacheShare: tokens > 0 ? cache / tokens : 0,
+    cacheShare: cacheDenom > 0 ? cache / cacheDenom : 0,
+    exactCache: split,
     costPerMillion: tokens > 0 ? cost / (tokens / 1e6) : 0,
     medianTokens: quantile(totals, 0.5),
     sessionLow: quantile(perSession, 0.25),
@@ -178,7 +190,7 @@ export function todayTiles(snap: AppSnapshot): TodayTiles {
   const t = snap.today;
   const total = t.tokens.total;
   const base = baseline(snap.days, t.date);
-  const approxToday = total > 0 ? t.tokens.cacheRead / total : 0;
+  const approxToday = base.exactCache ? cacheShareOf(t.tokens) : total > 0 ? t.tokens.cacheRead / total : 0;
   const perMillion = total > 0 ? t.cost / (total / 1e6) : 0;
   const hasBase = base.activeDays >= 3 && total > 0;
   return {
@@ -266,7 +278,7 @@ export function efficiency(period: { tokens: TokenCounts; cost: number; sessions
   const t = period.tokens;
   const total = t.total;
   const share = cacheShareOf(t);
-  const approxShare = total > 0 ? t.cacheRead / total : 0;
+  const approxShare = base.exactCache ? share : total > 0 ? t.cacheRead / total : 0;
   const perM = total > 0 ? period.cost / (total / 1e6) : 0;
   const payoff = t.cacheWrite > 0 ? t.cacheRead / t.cacheWrite : t.cacheRead > 0 ? 50 : 0;
   const perSession = period.sessions > 0 ? total / period.sessions : 0;

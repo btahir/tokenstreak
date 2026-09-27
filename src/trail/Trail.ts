@@ -37,6 +37,7 @@ import type {
   TrailTool,
   TrailVariant,
 } from "./types";
+import { filterBlurWorks, softwareBlur } from "./blur";
 
 type RGB = [number, number, number];
 
@@ -207,21 +208,6 @@ function toolColor(theme: ThemeDef, tools: ToolShares): RGB {
   return s > 0 ? [c[0] / s, c[1] / s, c[2] / s] : theme.tool.claude;
 }
 
-let filterSupport: boolean | null = null;
-function supportsFilter(): boolean {
-  if (filterSupport === null) {
-    try {
-      const c = document.createElement("canvas").getContext("2d");
-      if (!c) return (filterSupport = false);
-      c.filter = "blur(2px)";
-      filterSupport = c.filter === "blur(2px)";
-    } catch {
-      filterSupport = false;
-    }
-  }
-  return filterSupport;
-}
-
 type Kind = "today" | "lit" | "frozen" | "wisp" | "dark";
 interface Pt {
   x: number;
@@ -287,6 +273,10 @@ export class Trail {
   private skyCache = document.createElement("canvas");
   private glowCache = document.createElement("canvas");
   private bodyCache = document.createElement("canvas");
+  private blurCache = document.createElement("canvas");
+  private shadowCache = document.createElement("canvas");
+  private auroraCache: HTMLCanvasElement | null = null;
+  private auroraPad = 0;
   private particles: Particle[] = [];
   private t = 0;
   private last = 0;
@@ -505,6 +495,8 @@ export class Trail {
       if (!this.layout()) return;
       this.paintSky();
       this.paintRibbon();
+      this.auroraCache = null;
+      if (this.tier().min >= 100) this.paintAurora();
       this.dirty = false;
     }
     this.progressShown = this.progressTarget;
@@ -562,6 +554,8 @@ export class Trail {
       if (this.layout()) {
         this.paintSky();
         this.paintRibbon();
+        this.auroraCache = null;
+        if (this.tier().min >= 100) this.paintAurora();
         this.dirty = false;
         this.stats.cacheMs = performance.now() - t0;
       } else return;
@@ -868,14 +862,20 @@ export class Trail {
     g.clearRect(0, 0, this.w, this.h);
     g.globalCompositeOperation = T.blend;
     for (const x of spans) this.ribbonLayers(g, x.run.a, x.end, x.dim, x.run.current, "glow", q);
-    c.drawImage(gc, 0, 0, this.w, this.h);
-    if (T.shadow && supportsFilter()) {
-      // one blurred, offset silhouette of every run
-      c.save();
-      c.filter = `blur(${(3.5 * k).toFixed(1)}px)`;
-      c.translate(0, 3.2 * k);
-      for (const x of spans) this.ribbonLayers(c, x.run.a, x.end, x.dim, x.run.current, "shadow", this.dpr);
-      c.restore();
+    // Blur by compositing with an identity transform: filter radii then mean
+    // device pixels in every engine (WebKit scales them by the transform).
+    c.drawImage(this.blurInto(this.blurCache, gc, 8 * k * q), 0, 0, this.w, this.h);
+    if (T.shadow) {
+      // one blurred, offset silhouette of every run, at half resolution
+      const q2 = this.dpr * 0.5;
+      const sc = this.shadowCache;
+      sc.width = Math.max(1, Math.round(this.w * q2));
+      sc.height = Math.max(1, Math.round(this.h * q2));
+      const sx = sc.getContext("2d")!;
+      sx.setTransform(q2, 0, 0, q2, 0, 3.2 * k * q2);
+      sx.clearRect(0, -10, this.w, this.h + 10);
+      for (const x of spans) this.ribbonLayers(sx, x.run.a, x.end, x.dim, x.run.current, "shadow", q2);
+      c.drawImage(this.blurInto(this.blurCache, sc, 3.5 * k * q2), 0, 0, this.w, this.h);
     }
     // light theme: a thin darker rim gives the ribbon an edge on a pale sky
     if (T.rim) for (const x of spans) this.ribbonLayers(c, x.run.a, x.end, x.dim, x.run.current, "rim", this.dpr);
@@ -889,7 +889,7 @@ export class Trail {
     for (const x of spans) this.ribbonLayers(bctx, x.run.a, x.end, x.dim, x.run.current, "body", this.dpr);
     c.save();
     c.setTransform(1, 0, 0, 1, 0, 0);
-    if (supportsFilter() && T.bodyBlur * k * this.dpr >= 1) c.filter = `blur(${(T.bodyBlur * k * this.dpr).toFixed(1)}px)`;
+    if (filterBlurWorks() && T.bodyBlur * k * this.dpr >= 1) c.filter = `blur(${(T.bodyBlur * k * this.dpr).toFixed(1)}px)`;
     c.drawImage(bc, 0, 0);
     c.restore();
     if (T.inner > 0) for (const x of spans) this.ribbonLayers(c, x.run.a, x.end, x.dim, x.run.current, "inner", this.dpr);
@@ -900,7 +900,25 @@ export class Trail {
     c.globalCompositeOperation = "source-over";
   }
 
-  private ribbonLayers(c: Ctx, a: number, b: number, dim: number, current: boolean, mode: "glow" | "body" | "core" | "rim" | "inner" | "shadow", scale: number): void {
+  /** Draws `src` into `dst` (same pixel size) through a device-pixel blur. */
+  private blurInto(dst: HTMLCanvasElement, src: HTMLCanvasElement, px: number): HTMLCanvasElement {
+    dst.width = src.width;
+    dst.height = src.height;
+    const d = dst.getContext("2d")!;
+    d.setTransform(1, 0, 0, 1, 0, 0);
+    d.clearRect(0, 0, dst.width, dst.height);
+    if (filterBlurWorks()) {
+      d.filter = `blur(${Math.max(0.5, px).toFixed(1)}px)`;
+      d.drawImage(src, 0, 0);
+      d.filter = "none";
+    } else {
+      d.drawImage(src, 0, 0);
+      softwareBlur(dst, px);
+    }
+    return dst;
+  }
+
+  private ribbonLayers(c: Ctx, a: number, b: number, dim: number, current: boolean, mode: "glow" | "body" | "core" | "rim" | "inner" | "shadow", _scale: number): void {
     const T = this.theme;
     const S = this.samples;
     const k = this.k;
@@ -945,17 +963,9 @@ export class Trail {
       c.fill();
     };
     if (mode === "glow") {
-      if (supportsFilter()) {
-        c.filter = `blur(${(8 * k * scale).toFixed(1)}px)`;
-        c.fillStyle = grad(T.glowA, "glow");
-        poly(T.glowMul);
-        c.filter = "none";
-      } else {
-        for (const [m, al] of [[5, 0.12], [3.4, 0.16], [2.2, 0.22]] as const) {
-          c.fillStyle = grad(T.glowA * al * 2.2, "glow");
-          poly((m * T.glowMul) / 3.6);
-        }
-      }
+      // blurred later, as one image (see paintRibbon)
+      c.fillStyle = grad(T.glowA, "glow");
+      poly(T.glowMul);
       return;
     }
     if (mode === "rim") {
@@ -1355,28 +1365,64 @@ export class Trail {
     c.fill();
   }
 
-  private aurora(c: Ctx, t: number): void {
+  /** Paints soft aurora curtains once (blurred, quarter resolution). */
+  private paintAurora(): void {
     const w = this.w;
     const h = this.h;
+    const q = this.dpr * 0.25;
+    const pad = w * 0.1;
+    const src = this.shadowCache;
+    src.width = Math.max(1, Math.round((w + pad * 2) * q));
+    src.height = Math.max(1, Math.round(h * q));
+    const c = src.getContext("2d")!;
+    c.setTransform(q, 0, 0, q, pad * q, 0);
+    c.clearRect(-pad, 0, w + pad * 2, h);
     const dark = this.themeName === "dark";
     const cols: RGB[] = dark ? [[120, 230, 200], [170, 140, 255], [255, 160, 190]] : [[150, 210, 255], [200, 170, 255], [255, 180, 200]];
-    c.save();
     c.globalCompositeOperation = dark ? "lighter" : "source-over";
+    const alphas = dark ? [0.2, 0.11, 0.09] : [0.24, 0.16, 0.14];
+    const r = rng(this.seed * 71);
     for (let b = 0; b < 3; b++) {
-      const top = h * (0.08 + b * 0.05);
-      const bot = h * (0.42 + b * 0.04);
-      // the gradient fades out inside the wavy polygon, so no edge ever shows
-      const g = c.createLinearGradient(0, top + h * 0.05, 0, bot - h * 0.06);
+      const top = h * (0.05 + b * 0.06);
+      const bot = h * (0.36 + b * 0.05);
+      const ph = r() * 6;
+      const wave = (x: number, f: number, amp: number) => Math.sin((x / w) * f + ph) * amp * h + Math.sin((x / w) * f * 2.3 + ph * 1.7) * amp * 0.4 * h;
+      const g = c.createLinearGradient(0, top - h * 0.1, 0, bot + h * 0.1);
       g.addColorStop(0, rgba(cols[b]!, 0));
-      g.addColorStop(0.55, rgba(cols[b]!, dark ? 0.14 : 0.2));
+      g.addColorStop(0.55, rgba(cols[b]!, alphas[b]!));
       g.addColorStop(1, rgba(cols[b]!, 0));
       c.fillStyle = g;
       c.beginPath();
-      for (let x = 0; x <= w; x += 10) c.lineTo(x, top + Math.sin((x / w) * 5 + t * 0.35 + b * 2) * h * 0.05);
-      for (let x = w; x >= 0; x -= 10) c.lineTo(x, bot + Math.sin((x / w) * 4 + t * 0.28 + b) * h * 0.06);
+      for (let x = -pad; x <= w + pad; x += 8) c.lineTo(x, top + wave(x, 3.1 + b, 0.1));
+      for (let x = w + pad; x >= -pad; x -= 8) c.lineTo(x, bot + wave(x, 2.4 + b, 0.08));
       c.closePath();
       c.fill();
+      // irregular vertical rays: the folds of the curtain
+      const rays = 7 + Math.round(r() * 5);
+      for (let i = 0; i < rays; i++) {
+        const x = -pad + r() * (w + pad * 2);
+        const rw = w * (0.01 + r() * 0.035);
+        const yt = top + wave(x, 3.1 + b, 0.1);
+        const yb = bot + wave(x, 2.4 + b, 0.08);
+        const rg = c.createLinearGradient(0, yt, 0, yb);
+        rg.addColorStop(0, rgba(cols[b]!, 0));
+        rg.addColorStop(0.7, rgba(cols[b]!, alphas[b]! * (0.4 + r() * 0.6)));
+        rg.addColorStop(1, rgba(cols[b]!, 0));
+        c.fillStyle = rg;
+        c.fillRect(x, yt, rw, yb - yt);
+      }
     }
+    this.auroraCache = this.blurInto(document.createElement("canvas"), src, 14 * this.k * q);
+    this.auroraPad = pad;
+  }
+
+  private aurora(c: Ctx, t: number): void {
+    if (!this.auroraCache) return;
+    const drift = Math.sin(t * 0.12) * this.auroraPad * 0.8;
+    c.save();
+    c.globalCompositeOperation = this.themeName === "dark" ? "lighter" : "source-over";
+    c.globalAlpha = 0.8 + 0.2 * Math.sin(t * 0.4);
+    c.drawImage(this.auroraCache, -this.auroraPad + drift, 0, this.w + this.auroraPad * 2, this.h);
     c.restore();
   }
 
