@@ -1732,6 +1732,8 @@ export class Trail {
     const out: { x: number; y: number; w: number }[] = [];
     if (b - a < 1) return out;
     const ds = 2;
+    const fadeIn = Math.max(24 * k, 1.2 * this.step);
+    const fadeOut = live ? Math.max(this.v.headR * k * 2.2, 0.8 * this.step) : fadeIn;
     let len = 0;
     let total = 0;
     for (let j = a + 1; j <= b; j++) total += Math.hypot(S[j]!.x - S[j - 1]!.x, S[j]!.y - S[j - 1]!.y);
@@ -1753,14 +1755,17 @@ export class Trail {
         ny /= nl;
         const wd = lerp(p.wd, q.wd, f);
         const l = len + seg * f;
-        const tp = Math.min(1, l / (6 * ds * 3), (total - l) / (3 * ds * 3) + (live ? 1 : 0.1));
-        const off = (Math.sin(l / wave + ti * 2.09 + t * (0.7 + ti * 0.13)) * 0.8 + Math.sin(l / (wave * 2.3) - ti + t * 0.3) * 0.2) * wd * (dark ? 0.36 : 0.26) * tp;
-        out.push({ x: x + nx * off, y: y + ny * off, w: smoothstep(4.5, 7, wd) * (1 - sparse) * lerp(p.a, q.a, f) * clamp(lerp(p.sh[ti] ?? 0, q.sh[ti] ?? 0, f) * 1.6 + 0.08, 0, 1) });
+        // three lanes, each thread weaving inside its own lane: the wiggle (+-0.2) is smaller
+        // than half the lane spacing (0.5), so threads never cross or close into outlines
+        const lane = (ti - 1) * 0.5;
+        const wig = (Math.sin(l / wave + ti * 2.09 + t * (0.7 + ti * 0.13)) * 0.8 + Math.sin(l / (wave * 2.3) - ti + t * 0.3) * 0.2) * 0.2;
+        const off = (lane + wig) * wd * (dark ? 0.72 : 0.52) * 0.5;
+        // fade in over the run's first day and out before the head, where the ribbon narrows
+        const fade = smoothstep(0, fadeIn, l) * smoothstep(0, fadeOut, total - l);
+        out.push({ x: x + nx * off, y: y + ny * off, w: fade * smoothstep(4.5, 7, wd) * (1 - sparse) * lerp(p.a, q.a, f) * clamp(lerp(p.sh[ti] ?? 0, q.sh[ti] ?? 0, f) * 1.6 + 0.08, 0, 1) });
       }
       len += seg;
     }
-    const e = S[b]!;
-    out.push({ x: e.x, y: e.y, w: 0 });
     return out;
   }
 
