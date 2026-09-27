@@ -204,8 +204,13 @@ export function todayTiles(snap: AppSnapshot): TodayTiles {
 
 /* ---------------- progress copy ---------------- */
 
+/** "82%", or "15×" once far past the goal. */
+export function progressLabel(progress: number): string {
+  return progress >= 3 ? `${progress >= 10 ? Math.round(progress) : Number(progress.toFixed(1))}×` : `${Math.round(progress * 100)}%`;
+}
+
 export function progressCopy(t: TodayView): { lead: string; rest: string; pct: string } {
-  const pct = `${Math.round(t.progress * 100)}%`;
+  const pct = progressLabel(t.progress);
   if (t.goal <= 0) return { lead: "", rest: "No daily goal yet", pct: "" };
   if (t.met) {
     const over = t.tokens.total - t.goal;

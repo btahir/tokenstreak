@@ -17,6 +17,7 @@ import {
   heatLevel,
   heatmapColumns,
   progressCopy,
+  progressLabel,
   revealFacts,
   simulateGoal,
   streakMood,
@@ -186,6 +187,15 @@ describe("goals", () => {
     expect(f.total).toBe(s.lifetime.tokens.total);
     expect(f.daysShowedUp).toBeGreaterThan(0);
     expect(f.busiest!.total).toBe(Math.max(...s.days.map((d) => d.total)));
+  });
+});
+
+describe("progressLabel", () => {
+  it("switches to multiples far past the goal", () => {
+    expect(progressLabel(0.82)).toBe("82%");
+    expect(progressLabel(2.5)).toBe("250%");
+    expect(progressLabel(3.46)).toBe("3.5×");
+    expect(progressLabel(15.05)).toBe("15×");
   });
 });
 

@@ -954,6 +954,13 @@ export class Trail {
         if (j === a) c.moveTo(s.x + s.nx * hw, s.y + s.ny * hw);
         else c.lineTo(s.x + s.nx * hw, s.y + s.ny * hw);
       }
+      if (current) {
+        // round cap where the cached run meets today's live segment
+        const s = S[b]!;
+        const hw = s.wd * mul * taper(b) * 0.5 + pad;
+        const th = Math.atan2(s.ny, s.nx);
+        c.arc(s.x, s.y, hw, th, th - Math.PI, true);
+      }
       for (let j = b; j >= a; j--) {
         const s = S[j]!;
         const hw = s.wd * mul * taper(j) * 0.5 + pad;
@@ -1177,17 +1184,25 @@ export class Trail {
       const f = (j - a) / (b - a);
       return prevLit ? lerp(wPrev, wTarget, f) : wTarget * Math.min(1, f * 1.4 + 0.1);
     };
-    const draw = (mul: number, alpha: number, fill: RGB, pad = 0) => {
+    // the wide glow tapers into the head so it never ends in a flat edge
+    const endTaper = (j: number, amount: number) => {
+      if (!amount) return 1;
+      const f = (j - a) / (b - a);
+      const e = clamp((f - 0.45) / 0.55, 0, 1);
+      return 1 - amount * e * e * (3 - 2 * e);
+    };
+    // the body narrows into the head orb so a very big day never ends in a flat cap
+    const draw = (mul: number, alpha: number, fill: RGB, pad = 0, taper = 0.55) => {
       c.beginPath();
       for (let j = a; j <= b; j++) {
         const s = S[j]!;
-        const hw = widthAt(j) * mul * 0.5 + pad;
+        const hw = (widthAt(j) * mul * 0.5 + pad) * endTaper(j, taper);
         if (j === a) c.moveTo(s.x + s.nx * hw, s.y + s.ny * hw);
         else c.lineTo(s.x + s.nx * hw, s.y + s.ny * hw);
       }
       for (let j = b; j >= a; j--) {
         const s = S[j]!;
-        const hw = widthAt(j) * mul * 0.5 + pad;
+        const hw = (widthAt(j) * mul * 0.5 + pad) * endTaper(j, taper);
         c.lineTo(s.x - s.nx * hw, s.y - s.ny * hw);
       }
       c.closePath();
@@ -1197,7 +1212,20 @@ export class Trail {
     const lit = prog >= 1;
     const a0 = lit ? 1 : 0.55 + 0.45 * clamp(prog, 0, 1);
     const glowCol = T.glowTint ? mixRGB(col, T.glowTint, T.glowTintAmt) : col;
-    draw(T.glowMul * 0.9, T.glowA * 0.3 * a0, glowCol);
+    // today's glow is live (not in the blurred cache), so it is built from
+    // soft radial falloffs instead of a hard-edged polygon
+    const glowR = (j: number) => widthAt(j) * T.glowMul * 0.42 * endTaper(j, 0.92);
+    for (let j = a; j <= b; j++) {
+      const s = S[j]!;
+      const r = Math.max(2, glowR(j));
+      const g = c.createRadialGradient(s.x, s.y, 0, s.x, s.y, r);
+      g.addColorStop(0, rgba(glowCol, (T.glowA * 0.55 * a0) / Math.max(1, (b - a + 1) / 3)));
+      g.addColorStop(1, rgba(glowCol, 0));
+      c.fillStyle = g;
+      c.beginPath();
+      c.arc(s.x, s.y, r, 0, 7);
+      c.fill();
+    }
     if (T.rim) draw(T.bodyMul, T.rimA * a0, mixRGB(col, T.rim, 0.6), Math.max(0.6, 0.7 * k));
     draw(T.bodyMul, T.bodyA * 0.85 * a0, col);
     if (T.inner > 0) draw(T.bodyMul * 0.5, T.inner * a0, mixRGB(col, T.innerTint, 0.55));

@@ -15,6 +15,7 @@ import {
   efficiency,
   heatmapColumns,
   periodBars,
+  progressLabel,
   tierInfo,
   trailSummary,
   windowSums,
@@ -114,7 +115,7 @@ function Hero({ snap, maxDays }: { snap: AppSnapshot; maxDays: number }) {
             <Spark size={13} from={theme === "dark" ? "#FFF6EA" : "#FFB27A"} to={theme === "dark" ? "#FFD6A8" : "#F0728C"} />
             {snap.streak.current}-day streak · best {snap.streak.longest}
           </span>
-          {t.goal > 0 && <span className="hpill">{t.met ? `Lit · ${pct}%` : `${pct}% · ${formatTokens(t.remaining)} to go`}</span>}
+          {t.goal > 0 && <span className="hpill">{t.met ? `Lit · ${progressLabel(t.progress)}` : `${pct}% · ${formatTokens(t.remaining)} to go`}</span>}
         </div>
       </div>
       <span className="hpill hero__tier" data-testid="tier-chip">
