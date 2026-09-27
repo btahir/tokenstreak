@@ -115,6 +115,18 @@ fn check(tool: Tool, root: &Path, tz: &str, label: &str) -> Option<usize> {
     Some(theirs.len())
 }
 
+/// An oracle that silently skips is no oracle: once `npx` exists, every
+/// comparison must actually run unless `TOKENSTREAK_SKIP_ORACLE=1`.
+fn require_all(label: &str, checked: usize, expected: usize) {
+    if std::env::var("TOKENSTREAK_SKIP_ORACLE").is_ok_and(|v| v == "1") {
+        return;
+    }
+    assert_eq!(
+        checked, expected,
+        "{label}: only {checked} of {expected} ccusage comparisons ran (is ccusage reachable?); set TOKENSTREAK_SKIP_ORACLE=1 to skip on purpose"
+    );
+}
+
 const ZONES: [&str; 5] = ["UTC", "America/New_York", "Asia/Kolkata", "Pacific/Auckland", "America/Los_Angeles"];
 
 #[test]
@@ -144,6 +156,7 @@ fn fixtures_match_ccusage_in_every_zone() {
         }
     }
     println!("oracle fixture checks passed: {checked}");
+    require_all("fixtures", checked, Tool::ALL.len() * ZONES.len());
 }
 
 #[test]
@@ -167,11 +180,15 @@ fn synthetic_history_matches_ccusage() {
     };
     let reqs = synth::requests(&s);
     let roots = synth::write_logs(dir.path(), &reqs, &mut Rng::new(9)).unwrap();
+    let zones = ["Europe/Berlin", "America/Los_Angeles"];
+    let mut checked = 0;
     for (i, tool) in Tool::ALL.iter().enumerate() {
-        for tz in ["Europe/Berlin", "America/Los_Angeles"] {
+        for tz in zones {
             if let Some(n) = check(*tool, &roots[i], tz, &format!("synthetic {}", tool.as_str())) {
                 println!("oracle ok: synthetic {} {tz}: {n} days", tool.as_str());
+                checked += 1;
             }
         }
     }
+    require_all("synthetic", checked, Tool::ALL.len() * zones.len());
 }
