@@ -62,22 +62,27 @@ export function ShareDialog({ snap, onClose }: { snap: AppSnapshot; onClose: () 
       // keep Tab inside the dialog
       const d = dialog.current;
       if (e.key !== "Tab" || !d) return;
-      const f = [...d.querySelectorAll<HTMLElement>("button:not([disabled]), [href], input, [tabindex]:not([tabindex='-1'])")].filter((el) => el.offsetParent !== null);
+      const f = [...d.querySelectorAll<HTMLElement>("button:not([disabled]), [href], input, [tabindex]:not([tabindex='-1'])")].filter((el) => el.offsetParent !== null && el.tabIndex >= 0);
       if (!f.length) return;
-      const first = f[0]!;
-      const last = f[f.length - 1]!;
-      const active = document.activeElement;
-      if (e.shiftKey && (active === first || active === d)) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && (active === last || !d.contains(active))) {
-        e.preventDefault();
-        first.focus();
-      }
+      // move focus ourselves: WebKit (WKWebView) skips buttons on Tab with default macOS
+      // keyboard settings, so the browser's own order would leak out of the dialog
+      e.preventDefault();
+      const i = f.indexOf(document.activeElement as HTMLElement);
+      const next = i < 0 ? (e.shiftKey ? f.length - 1 : 0) : (i + (e.shiftKey ? -1 : 1) + f.length) % f.length;
+      f[next]!.focus();
     };
+    // and if focus ever lands outside (a click on the scrim, the page root), bring it back
+    const onFocusIn = (e: FocusEvent) => {
+      const d = dialog.current;
+      if (d && e.target instanceof Node && !d.contains(e.target)) d.focus();
+    };
+    document.addEventListener("focusin", onFocusIn);
     window.addEventListener("keydown", onKey);
     dialog.current?.focus();
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("focusin", onFocusIn);
+    };
   }, [onClose]);
 
   const flash = (s: string) => {

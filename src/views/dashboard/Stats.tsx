@@ -129,7 +129,7 @@ function StatsBody({ snap, b }: { snap: AppSnapshot; b: Breakdown }) {
           </div>
           <div className="savings__grid">
             <div>
-              <span className="ts-label">From cache</span>
+              <span className="ts-label" title="Cache reads as a share of input (fresh input + cache reads + cache writes)">Input from cache</span>
               <b>{formatPercent(share)}</b>
             </div>
             <div>
@@ -172,7 +172,7 @@ function StatsBody({ snap, b }: { snap: AppSnapshot; b: Breakdown }) {
                 <th>Agent</th>
                 <th>Project</th>
                 <th>Started</th>
-                <th>Length</th>
+                <th className="sessions__len">Length</th>
                 <th>Model</th>
                 <th className="num">Tokens</th>
                 <th className="num">Est. cost</th>
@@ -189,11 +189,11 @@ function StatsBody({ snap, b }: { snap: AppSnapshot; b: Breakdown }) {
                         {TOOL_NAMES[s.tool].replace(" CLI", "")}
                       </span>
                     </td>
-                    <td className="mono">{s.project || "—"}</td>
+                    <td className="sessions__project">{s.project || "—"}</td>
                     <td>{formatDate(s.startedAt.slice(0, 10))}</td>
-                    <td>{mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${mins} min`}</td>
-                    <td className="mono sessions__model" title={s.models[0] ? prettyModel(s.models[0]) : undefined}>
-                      {s.models[0] ?? "—"}
+                    <td className="sessions__len">{mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${mins} min`}</td>
+                    <td className="sessions__model" title={s.models[0] ?? undefined}>
+                      {s.models[0] ? prettyModel(s.models[0]) : "—"}
                     </td>
                     <td className="num">{formatTokens(s.tokens, { digits: 1, fixed: true })}</td>
                     <td className="num">{formatUsd(s.cost)}</td>

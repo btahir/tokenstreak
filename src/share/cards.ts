@@ -130,7 +130,7 @@ export function buildCardModel(snap: AppSnapshot, o: CardOptions, share: ShareCa
       : [
           ["From cache", formatPercent(wk.cacheShare)],
           ["Tokens", formatTokens(wk.tokens)],
-          ["Days lit", `${wk.daysLit} of 7`],
+          lw && leaner >= 0.01 ? ["Per token vs usual", `−${Math.round(leaner * 100)}%`] : ["Active days", `${wk.activeDays} of 7`],
           ["Busiest day", wk.busiest ? formatTokens(wk.busiest.total) : "—"],
         ];
     m = {
@@ -319,9 +319,50 @@ export async function renderCard(model: CardModel, o: CardOptions): Promise<HTML
   out.height = H * S;
   const c = out.getContext("2d")!;
 
-  // sky + trail
+  const P = PAL[o.theme];
+  const padX = 32;
+  const story = o.format === "story";
+  const dark = o.theme === "dark";
+
+  // ---- layout first (measure only), so the sky can keep stars and hills away from text ----
+  const hPx = fit(c, model.headline, (px) => `400 ${px}px ${SERIF}`, story ? 150 : 92, W - padX * 2);
+  const hTop = story ? 30 + 22 + 70 : 30 + 22 + 26;
+  const hBase = hTop + hPx * 0.8;
+  const sPx = fit(c, model.subline, (px) => `italic 400 ${px}px ${SERIF}`, story ? 46 : 34, W - padX * 2);
+  // the subline clears the headline's descenders ("My year" over "in light")
+  const descends = /[gjpqy,;]/.test(model.headline);
+  const sBase = hBase + (descends ? hPx * 0.2 + sPx * 0.38 : hPx * 0.06) + sPx * 0.74;
+  const chipY = sBase + (story ? 24 : 16);
+  const textBottom = model.chip ? chipY + 28 : sBase + sPx * 0.25;
+  // text never sits on the ridge: the hills stay below the footer block
+  const hillTop = story ? 0.946 : 0.957;
+  const fPx = story ? 15.5 : 13;
+  const footY = Math.round(H * hillTop) - (story ? 14 : 10);
+  const mixY = story && model.mix.length ? footY - fPx - 12 : footY;
+  let statsBottom = mixY - fPx - (story ? 30 : 18);
+  const projectsY = statsBottom + 4;
+  if (model.projects) statsBottom -= fPx + 14;
+  const sLab = story ? 15.5 : 12.5;
+  const sVal = story ? 60 : 36;
+  const rowH = sLab + 10 + sVal * 0.82;
+  const statsTop = story ? statsBottom - (rowH * 2 + 34) : statsBottom - sVal * 0.8 - 9 - sLab;
+
+  // ---- sky + trail ----
   const tc = document.createElement("canvas");
-  const trail = new Trail(tc, { theme: o.theme, variant: "card", layout: trailLayout(o, model.maxDays, !!model.chip), seed: 7, size: { width: W, height: H, dpr: S }, reducedMotion: false });
+  const base = trailLayout(o, model.maxDays, !!model.chip);
+  const layout: Partial<TrailLayout> = {
+    ...base,
+    hillTop,
+    // the ribbon lives between the headline block and the stats
+    top: Math.max(base.top ?? 0, (textBottom + 18) / H),
+    bottom: Math.min(base.bottom ?? 1, (statsTop - 20) / H),
+    starFree: [
+      { x: 0, y: 0, w: W, h: 64 },
+      { x: padX - 6, y: hTop - 10, w: W - padX * 2 + 12, h: textBottom - hTop + 16 },
+      { x: 0, y: statsTop - 12, w: W, h: H - statsTop + 12 },
+    ],
+  };
+  const trail = new Trail(tc, { theme: o.theme, variant: "card", layout, seed: 7, size: { width: W, height: H, dpr: S }, reducedMotion: false });
   trail.setData(model.trail);
   trail.renderStill(3.4, 1.8);
   trail.destroy();
@@ -329,17 +370,23 @@ export async function renderCard(model: CardModel, o: CardOptions): Promise<HTML
 
   // paper grain
   c.save();
-  c.globalAlpha = o.theme === "dark" ? 0.05 : 0.045;
+  c.globalAlpha = dark ? 0.05 : 0.045;
   c.globalCompositeOperation = "overlay";
   c.fillStyle = c.createPattern(grain(), "repeat")!;
   c.fillRect(0, 0, out.width, out.height);
   c.restore();
 
   c.scale(S, S);
-  const P = PAL[o.theme];
-  const padX = 32;
-  const story = o.format === "story";
   c.textBaseline = "alphabetic";
+  if (dark) {
+    // dusk ground: a soft scrim so the stats and legend never sit on the bright horizon band
+    const sg = c.createLinearGradient(0, statsTop - 50, 0, footY + 10);
+    sg.addColorStop(0, "rgba(22,15,38,0)");
+    sg.addColorStop(0.45, "rgba(22,15,38,0.38)");
+    sg.addColorStop(1, "rgba(22,15,38,0.66)");
+    c.fillStyle = sg;
+    c.fillRect(0, statsTop - 50, W, H - statsTop + 50);
+  }
 
   // header
   logo(c, padX, 30, 22);
@@ -353,16 +400,11 @@ export async function renderCard(model: CardModel, o: CardOptions): Promise<HTML
   c.textAlign = "left";
 
   // headline
-  const hPx = fit(c, model.headline, (px) => `400 ${px}px ${SERIF}`, story ? 150 : 92, W - padX * 2);
-  const hTop = story ? 30 + 22 + 70 : 30 + 22 + 26;
-  const hBase = hTop + hPx * 0.8;
   c.fillStyle = P.ink;
   c.font = `400 ${hPx}px ${SERIF}`;
   (c as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = `${-0.025 * hPx}px`;
   c.fillText(model.headline, padX - hPx * 0.02, hBase);
   (c as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = "0px";
-  const sPx = fit(c, model.subline, (px) => `italic 400 ${px}px ${SERIF}`, story ? 46 : 34, W - padX * 2);
-  const sBase = hBase + (story ? 16 : 10) + sPx * 1.0;
   c.fillStyle = P.mut;
   c.font = `italic 400 ${sPx}px ${SERIF}`;
   c.fillText(model.subline, padX, sBase);
@@ -371,7 +413,7 @@ export async function renderCard(model: CardModel, o: CardOptions): Promise<HTML
   if (model.chip) {
     c.font = `600 12px ${SANS}`;
     const tw = c.measureText(model.chip).width;
-    const cy = sBase + (story ? 24 : 16);
+    const cy = chipY;
     const ch = 28;
     const cw = tw + 22 + 18;
     c.fillStyle = P.pill;
@@ -386,32 +428,27 @@ export async function renderCard(model: CardModel, o: CardOptions): Promise<HTML
   }
 
   // footer: at least ~26 px at 1080 wide (square), ~31 px (story)
-  const fPx = story ? 15.5 : 13;
   const g = fPx * 0.78;
-  const footY = H - (story ? 34 : 28) - 3;
-  // story: the credit gets its own line under the agent mix so they never collide
-  const mixY = story && model.mix.length ? footY - fPx - 12 : footY;
   c.font = `500 ${fPx}px ${SANS}`;
   let fx = padX;
   for (const mx of model.mix) {
     const label = `${TOOL_SHORT[mx.tool]} ${Math.round(mx.share * 100)}%`;
     c.fillStyle = TOOL_COL[mx.tool];
     const gy = mixY - fPx * 0.35;
-    if (mx.tool === "claude") {
-      c.beginPath();
-      c.arc(fx + g / 2, gy, g / 2, 0, 7);
-      c.fill();
-    } else if (mx.tool === "codex") {
-      roundRect(c, fx, gy - g / 2, g, g, g * 0.28);
-      c.fill();
-    } else {
-      c.beginPath();
+    c.beginPath();
+    if (mx.tool === "claude") c.arc(fx + g / 2, gy, g / 2, 0, 7);
+    else if (mx.tool === "codex") c.roundRect(fx, gy - g / 2, g, g, g * 0.28);
+    else {
       c.moveTo(fx + g / 2, gy - g * 0.55);
       c.lineTo(fx + g * 1.05, gy + g / 2);
       c.lineTo(fx - g * 0.05, gy + g / 2);
       c.closePath();
-      c.fill();
     }
+    c.fill();
+    // a thin ink ring keeps every swatch visible on the warm horizon (AA non-text contrast)
+    c.strokeStyle = dark ? "rgba(255,244,234,0.7)" : "rgba(35,29,51,0.55)";
+    c.lineWidth = 1;
+    c.stroke();
     c.fillStyle = P.mut;
     c.fillText(label, fx + g + 5, mixY);
     fx += g + 5 + c.measureText(label).width + fPx;
@@ -427,12 +464,10 @@ export async function renderCard(model: CardModel, o: CardOptions): Promise<HTML
   }
 
   // projects line (only when allowed)
-  let statsBottom = mixY - fPx - (story ? 30 : 18);
   if (model.projects) {
     c.font = `500 ${fPx}px ${SANS}`;
     c.fillStyle = P.mut;
-    c.fillText(`Built: ${model.projects.join(" · ")}`, padX, statsBottom + 4);
-    statsBottom -= fPx + 14;
+    c.fillText(`Built: ${model.projects.join(" · ")}`, padX, projectsY);
   }
 
   // stats: frameless serif numerals
