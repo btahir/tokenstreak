@@ -29,19 +29,6 @@
         "focus": true,
         "acceptFirstMouse": true,
         "visibleOnAllWorkspaces": true
-      },
-      {
-        "label": "dashboard",
-        "url": "index.html?view=dashboard",
-        "title": "Tokenstreak",
-        "width": 1180,
-        "height": 800,
-        "minWidth": 900,
-        "minHeight": 620,
-        "visible": false,
-        "center": true,
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true
       }
     ],
     "security": {
@@ -50,19 +37,38 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": [
+      "app",
+      "dmg"
+    ],
     "category": "DeveloperTool",
     "shortDescription": "Goals, streaks and history for your AI coding tokens",
     "longDescription": "Tokenstreak turns the token usage of Claude Code, Codex CLI and Gemini CLI into daily goals, streaks, achievements and a history worth sharing. Everything stays on your Mac: it reads usage numbers only, never your prompts or responses.",
     "copyright": "© 2026 Tokenstreak contributors. MIT License.",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.png"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.png"
+    ],
     "macOS": {
       "minimumSystemVersion": "12.0",
       "signingIdentity": "-",
       "dmg": {
-        "windowSize": { "width": 660, "height": 400 },
-        "appPosition": { "x": 180, "y": 190 },
-        "applicationFolderPosition": { "x": 480, "y": 190 }
+        "background": "dmg/background.png",
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        },
+        "appPosition": {
+          "x": 180,
+          "y": 190
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 190
+        }
       }
     }
   }

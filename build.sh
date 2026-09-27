@@ -55,7 +55,7 @@ DMG="$(ls -t "$BUNDLE"/dmg/Tokenstreak_*.dmg 2>/dev/null | head -1 || true)"
 
 bold "==> Verifying"
 codesign --verify --deep --strict "$APP" && echo "signature: ad-hoc, valid"
-hdiutil verify "$DMG" >/dev/null && echo "dmg: checksum valid"
+hdiutil verify "$DMG" >/dev/null 2>&1 && echo "dmg: checksum valid"
 
 echo
 bold "Built:"
