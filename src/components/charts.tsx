@@ -67,7 +67,22 @@ export function BarChart({ rows, height = 200, goal, labelEvery = 1, heading, te
   const every = Math.max(labelEvery, Math.ceil(56 / Math.max(1, bw)));
 
   return (
-    <div className="chart" ref={wrap} data-testid={testId} onMouseLeave={() => setHover(null)}>
+    <div
+      className="chart"
+      ref={wrap}
+      data-testid={testId}
+      onMouseLeave={() => setHover(null)}
+      tabIndex={0}
+      aria-label={`${rows.length} bars. Use the arrow keys to read each one.`}
+      onFocus={() => hover === null && setHover(rows.length - 1)}
+      onBlur={() => setHover(null)}
+      onKeyDown={(e) => {
+        const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+        if (!d) return;
+        e.preventDefault();
+        setHover((h) => Math.max(0, Math.min(rows.length - 1, (h ?? rows.length - 1) + d)));
+      }}
+    >
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ overflow: "visible" }} role="img" aria-label="Tokens per period, stacked by agent">
         {scale.ticks.map((v) => {
           const yy = y(v);
@@ -270,6 +285,7 @@ export function MiniBars({ values, labels, height = 120, highlight, format = for
 export function Heatmap({ columns: all, gap: gapMax = 3, minCell = 9, maxCell = 17, weekStartsOn = "monday" }: { columns: HeatCell[][]; gap?: number; minCell?: number; maxCell?: number; weekStartsOn?: "monday" | "sunday" }) {
   const [wrap, avail] = useWidth<HTMLDivElement>(0);
   const [hover, setHover] = useState<{ c: HeatCell; x: number; y: number } | null>(null);
+  const [cursor, setCursor] = useState<[number, number] | null>(null);
   const LABEL_W = 28;
   const room = Math.max(0, avail - LABEL_W);
   const gap = room && room / all.length < 12 ? 2 : gapMax;
@@ -292,11 +308,46 @@ export function Heatmap({ columns: all, gap: gapMax = 3, minCell = 9, maxCell = 
     return out.filter((m, i, a) => i === 0 || m.col - a[i - 1]!.col >= 3);
   }, [columns]);
   const width = columns.length * (cell + gap) - gap;
+  function focusCell(ci: number, ri: number) {
+    const c = columns[ci]?.[ri];
+    if (c) setHover({ c, x: LABEL_W + ci * (cell + gap) + cell / 2, y: ri * (cell + gap) + 18 });
+  }
   // Mon, Wed, Fri rows
   const dayRows = weekStartsOn === "monday" ? [0, 2, 4] : [1, 3, 5];
   const dayName = (r: number) => weekdayShort(columns[0]?.[r]?.date ?? "2026-09-21");
   return (
-    <div className="heat-wrap" ref={wrap} onMouseLeave={() => setHover(null)}>
+    <div
+      className="heat-wrap"
+      ref={wrap}
+      onMouseLeave={() => setHover(null)}
+      tabIndex={0}
+      aria-label="A year of daily tokens. Use the arrow keys to step through days."
+      onFocus={() => {
+        const ci = columns.length - 1;
+        const ri = Math.max(0, columns[ci]?.findIndex((c) => c.today) ?? 0);
+        setCursor([ci, ri]);
+        focusCell(ci, ri);
+      }}
+      onBlur={() => {
+        setCursor(null);
+        setHover(null);
+      }}
+      onKeyDown={(e) => {
+        if (!cursor) return;
+        const [dc, dr] = e.key === "ArrowRight" ? [1, 0] : e.key === "ArrowLeft" ? [-1, 0] : e.key === "ArrowDown" ? [0, 1] : e.key === "ArrowUp" ? [0, -1] : [0, 0];
+        if (!dc && !dr) return;
+        e.preventDefault();
+        let ci = cursor[0] + dc;
+        let ri = cursor[1] + dr;
+        if (ri > 6) [ci, ri] = [ci + 1, 0];
+        if (ri < 0) [ci, ri] = [ci - 1, 6];
+        ci = Math.max(0, Math.min(columns.length - 1, ci));
+        const c = columns[ci]?.[ri];
+        if (!c || c.future) return;
+        setCursor([ci, ri]);
+        focusCell(ci, ri);
+      }}
+    >
       <div className="heat-months" style={{ width, marginLeft: LABEL_W }}>
         {months.map((m) => (
           <span key={`${m.label}${m.col}`} style={{ left: m.col * (cell + gap) }}>
@@ -321,6 +372,7 @@ export function Heatmap({ columns: all, gap: gapMax = 3, minCell = 9, maxCell = 
                 data-today={c.today ? "" : undefined}
                 data-future={c.future ? "" : undefined}
                 data-pad={c.pad && !c.future ? "" : undefined}
+                data-cursor={cursor && cursor[0] === ci && cursor[1] === ri ? "" : undefined}
                 style={{ gridColumn: ci + 1, gridRow: ri + 1 }}
                 onMouseEnter={() => !c.future && !c.pad && setHover({ c, x: LABEL_W + ci * (cell + gap) + cell / 2, y: ri * (cell + gap) + 18 })}
               />
@@ -330,7 +382,7 @@ export function Heatmap({ columns: all, gap: gapMax = 3, minCell = 9, maxCell = 
       </div>
       {hover && (
         <Tip x={hover.x} y={hover.y} align={hover.x < 80 ? "left" : hover.x > width - 80 ? "right" : "center"}>
-          <div className="tip__h">{formatDate(hover.c.date)}</div>
+          <div className="tip__h" aria-live={cursor ? "polite" : undefined}>{formatDate(hover.c.date)}</div>
           <b className="tip__num">{hover.c.total ? formatTokens(hover.c.total) : "No tokens"}</b>
           <div className="tip__foot">{hover.c.met ? "Goal lit" : hover.c.frozen ? (hover.c.freeze ? "Streak freeze · streak kept" : "Rest day") : hover.c.total ? "Under goal" : hover.c.today ? "Today" : "Day off"}</div>
         </Tip>

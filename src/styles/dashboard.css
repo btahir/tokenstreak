@@ -42,7 +42,8 @@ html[data-view="dashboard"] #root { height: 100%; }
 .grid2 { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 12px; }
 .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .grid3--loading { min-height: 250px; }
-@media (max-width: 1060px) { .grid3 { grid-template-columns: 1fr 1fr; } .grid2 { grid-template-columns: 1fr; } }
+@media (max-width: 1060px) { .grid3 { grid-template-columns: 1fr 1fr; } .grid3 > :nth-child(3):last-child { grid-column: span 2; } .grid2 { grid-template-columns: 1fr; } }
+.chart:focus-visible, .heat-wrap:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; border-radius: 8px; }
 @media (max-width: 980px) { .grid4 { grid-template-columns: 1fr 1fr; } }
 
 .grid4 .tile { padding: 14px 16px; min-height: 124px; }
@@ -120,6 +121,7 @@ html[data-view="dashboard"] #root { height: 100%; }
 .heat i[data-goal] { background-image: radial-gradient(circle, var(--heat-dot) 0 1.3px, transparent 1.8px); box-shadow: none; }
 .heat i[data-frozen] { background: repeating-linear-gradient(45deg, var(--heat-0) 0 2px, rgba(169,216,245,.85) 2px 4px); }
 .heat i[data-today] { outline: 1.5px solid var(--ink); outline-offset: 1px; }
+.heat i[data-cursor] { transform: scale(1.35); position: relative; z-index: 1; box-shadow: 0 0 0 2px var(--focus); }
 .heat i[data-future] { background: transparent; box-shadow: inset 0 0 0 1px var(--line); opacity: .5; }
 .heat i[data-pad] { opacity: .45; }
 .heat i:not([data-future]):not([data-pad]):hover { transform: scale(1.35); position: relative; z-index: 1; }

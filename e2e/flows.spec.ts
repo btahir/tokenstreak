@@ -147,3 +147,33 @@ test.describe("reduced motion", () => {
     con.assertClean();
   });
 });
+
+test("heatmap and daily chart can be read with the keyboard", async ({ page }) => {
+  await page.setViewportSize({ width: 1180, height: 800 });
+  await page.goto(url({ view: "dashboard", preset: "streak-30", theme: "light" }));
+  const heat = page.locator(".heat-wrap");
+  await heat.focus();
+  await expect(heat.locator(".tip")).toBeVisible();
+  const first = await heat.locator(".tip__h").textContent();
+  await page.keyboard.press("ArrowLeft");
+  await expect(heat.locator(".tip__h")).not.toHaveText(first ?? "");
+  const chart = page.getByTestId("usage-chart");
+  await chart.focus();
+  await expect(chart.locator(".tip")).toContainText("Today");
+  await page.keyboard.press("ArrowLeft");
+  await expect(chart.locator(".tip")).not.toContainText("Today");
+});
+
+test("the 900 x 620 minimum window has no horizontal overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 620 });
+  for (const pg of ["overview", "stats", "achievements", "settings"]) {
+    await page.goto(url({ view: "dashboard", preset: "heavy-multi-tool", theme: "dark", page: pg }));
+    await expect(page.getByTestId(`page-${pg}`)).toBeVisible();
+    const over = await page.evaluate(() => {
+      const main = document.querySelector(".main")!;
+      const right = main.getBoundingClientRect().right;
+      return [...document.querySelectorAll(".card, .tile, .hero")].filter((el) => el.getBoundingClientRect().right > right + 1 || el.scrollWidth > el.clientWidth + 1).length;
+    });
+    expect(over, pg).toBe(0);
+  }
+});

@@ -244,7 +244,14 @@ export function Badge({ a, size = 92, meta, compact }: { a: Achievement; size?: 
   const r = ring / 2 - 3;
   const c = 2 * Math.PI * r;
   return (
-    <div className={`badge${locked ? " badge--locked" : ""}${a.isNew ? " badge--new" : ""}`} data-testid={`badge-${a.id}`} title={a.description}>
+    <div
+      className={`badge${locked ? " badge--locked" : ""}${a.isNew ? " badge--new" : ""}`}
+      data-testid={`badge-${a.id}`}
+      title={a.description}
+      tabIndex={0}
+      role="group"
+      aria-label={`${a.title}${locked ? ", locked" : ", unlocked"}. ${a.description}`}
+    >
       <div className="badge__art">
         <BadgeArt a={a} size={size} />
         {locked && p > 0 && (
