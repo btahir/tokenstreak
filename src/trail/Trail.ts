@@ -1030,7 +1030,11 @@ export class Trail {
       const cnt = Math.max(2, Math.ceil((xb - xa) / dx));
       for (let q = 0; q <= cnt; q++) {
         const x = xa + ((xb - xa) * q) / cnt;
-        const { y, seg } = curve(x);
+        let { y, seg } = curve(x);
+        // beyond a stretch's first/last day (reaching into a gap) continue straight along its
+        // own tangent: bending toward the gap's routed point drew a hook at the start
+        if (x < pts[i]!.x && j > i) y = pts[i]!.y + ((pts[i + 1]!.y - pts[i]!.y) / (pts[i + 1]!.x - pts[i]!.x || 1)) * (x - pts[i]!.x);
+        else if (x > pts[j]!.x && j > i) y = pts[j]!.y + ((pts[j]!.y - pts[j - 1]!.y) / (pts[j]!.x - pts[j - 1]!.x || 1)) * (x - pts[j]!.x);
         // attributes interpolate only between this stretch's own points
         let a = clamp(seg, i, j);
         if (x < pts[a]!.x && a > i) a--;
@@ -1065,10 +1069,13 @@ export class Trail {
         const s = samples[q]!;
         // only a path that starts at the canvas edge begins at full strength; one that starts
         // inside (short cards) tapers in like any other stretch
-        const atStart = i === 0 && pts[0]!.x <= 2 ? 1 : smoothstep(0, i === 0 ? Math.max(fadeLen, 0.22 * (xb - xa)) : fadeLen, s.x - xa);
+        // (the current run's own start eases in over a couple of days: its white core tapers in)
+        const startLen = i === 0 ? Math.max(fadeLen, 0.22 * (xb - xa)) : isHead ? Math.max(fadeLen, Math.min(2.5 * step, 0.3 * (xb - xa))) : fadeLen;
+        const atStart = i === 0 && pts[0]!.x <= 2 ? 1 : smoothstep(0, startLen, s.x - xa);
         const atEnd = isHead ? 1 : smoothstep(0, fadeLen, xb - s.x);
         const f = Math.min(atStart, atEnd);
-        s.wd *= 0.55 + 0.45 * f;
+        // the current run grows out of nothing at its start; other stretches taper to 55%
+        s.wd *= isHead && atStart < atEnd ? 0.25 + 0.75 * f : 0.55 + 0.45 * f;
         s.ef = f;
         // the path's very first day fades in from the left edge
         if (i === 0 && q - s0 < 12) s.a *= 0.45 + 0.55 * ((q - s0) / 12);
@@ -1414,7 +1421,7 @@ export class Trail {
         return dark ? T.glowA * Math.pow(s.a, 1.15) * s.ef : T.glowA * Math.pow(s.a, 2) * (1 - s.hw) * s.ef;
       }
       if (mode === "body") return T.bodyA * s.a * cur(s) * s.ef;
-      if (mode === "shadow") return 0.16 * clamp((s.a - 0.55) / 0.45, 0, 1) * cur(s);
+      if (mode === "shadow") return 0.16 * clamp((s.a - 0.55) / 0.45, 0, 1) * cur(s) * s.ef;
       // core: fades faster than the body on dim days; on very wide ribbons in dark it is held
       // back so additive light never blows out; it fades out first at a break
       const damp = dark ? Math.min(1, Math.pow((9 * this.k) / Math.max(1, s.wd), 0.35)) : 1;
