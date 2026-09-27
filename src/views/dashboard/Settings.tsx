@@ -249,16 +249,36 @@ function GoalsCard({ snap, settings }: { snap: AppSnapshot; settings: Settings }
       <Row
         title={
           <>
-            Streak freezes <span className="soon">Soon</span>
+            Streak freezes <FreezePips held={settings.streakFreezes ? snap.streak.freezesHeld : 0} />
           </>
         }
-        desc="Earn one for every 7-day run and hold up to 2; a missed day spends one. Until then, rest days bridge your streak."
+        desc={freezeCopy(snap, settings.streakFreezes)}
       >
-        <Toggle label="Streak freezes" on={false} onChange={() => {}} disabled />
+        <Toggle label="Streak freezes" on={settings.streakFreezes} onChange={(v) => void updateSettings({ streakFreezes: v })} />
       </Row>
       <div className="srow__d set__foot">Changing a goal never rewrites past days.</div>
     </Card>
   );
+}
+
+/** Held freezes as two small striped pips (the frozen-day treatment). */
+function FreezePips({ held }: { held: number }) {
+  return (
+    <span className="freeze-pips" role="img" aria-label={`${held} of 2 streak freezes held`} data-testid="freeze-pips">
+      {[0, 1].map((i) => (
+        <i key={i} data-on={i < held ? "" : undefined} />
+      ))}
+    </span>
+  );
+}
+
+function freezeCopy(snap: AppSnapshot, on: boolean): string {
+  if (!on) return "Earn one for every 7 goal days in a row and hold up to 2; a missed day spends one so your streak survives.";
+  const { freezesHeld: held, nextFreezeIn: next, freezesUsed: used } = snap.streak;
+  const holding = held === 0 ? "No freezes held yet." : held === 1 ? "You hold 1 freeze." : "You hold 2 freezes, the most you can carry.";
+  const earn = held < 2 && next > 0 ? ` Next one in ${next} goal ${next === 1 ? "day" : "days"}.` : "";
+  const spent = used > 0 ? ` ${used} spent so far.` : "";
+  return `${holding}${earn}${spent} A missed day spends one automatically.`;
 }
 
 function CustomInput({ draft, setDraft, onSubmit, onCancel, label }: { draft: string; setDraft: (s: string) => void; onSubmit: () => void; onCancel: () => void; label: string }) {

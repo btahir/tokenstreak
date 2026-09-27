@@ -135,7 +135,7 @@ function Reveal({ snap, goal, next }: { snap: AppSnapshot; goal: number; next: (
     const d = buildTrailData({ ...snap, today: { ...snap.today, goal } }, { maxDays: 400, goalFallback: goal });
     // Rows carry no goal before onboarding; judge history by the suggested goal.
     d.history = d.history.map((h) => ({ ...h, goalMet: h.tokens >= goal, goal }));
-    const sim = simulateGoal(snap.days, snap.today.date, goal, snap.streak.restDays);
+    const sim = simulateGoal(snap.days, snap.today.date, goal, snap.streak.restDays, snap.streak.freezesEnabled);
     d.streak = { current: sim.current, best: sim.best };
     return d;
   }, [snap, goal]);
@@ -201,7 +201,7 @@ function Goal({ snap, goal, setGoal, presets, back, done }: { snap: AppSnapshot;
   const [notify, setNotify] = useState(settings?.notifications.goalReached ?? true);
   const [sound, setSound] = useState(false);
   const [busy, setBusy] = useState(false);
-  const sim = useMemo(() => simulateGoal(snap.days, snap.today.date, goal, snap.streak.restDays), [snap, goal]);
+  const sim = useMemo(() => simulateGoal(snap.days, snap.today.date, goal, snap.streak.restDays, snap.streak.freezesEnabled), [snap, goal]);
   const median = baseline(snap.days, snap.today.date).medianTokens;
   const weeks = 20;
   const cells = useMemo(() => {

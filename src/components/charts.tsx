@@ -307,7 +307,7 @@ export function Heatmap({ columns, gap = 3, minCell = 10, maxCell = 17 }: { colu
         <Tip x={hover.x} y={hover.y} align={hover.x < 80 ? "left" : hover.x > width - 80 ? "right" : "center"}>
           <div className="tip__h">{formatDayYear(hover.c.date)}</div>
           <b className="tip__num">{hover.c.total ? formatTokens(hover.c.total) : "No tokens"}</b>
-          <div className="tip__foot">{hover.c.met ? "Goal lit" : hover.c.frozen ? "Rest day" : hover.c.total ? "Under goal" : hover.c.today ? "Today" : "Day off"}</div>
+          <div className="tip__foot">{hover.c.met ? "Goal lit" : hover.c.frozen ? (hover.c.freeze ? "Streak freeze · streak kept" : "Rest day") : hover.c.total ? "Under goal" : hover.c.today ? "Today" : "Day off"}</div>
         </Tip>
       )}
     </div>

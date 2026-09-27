@@ -338,3 +338,8 @@ html[data-view="lab"] body { background: var(--bg); }
 .shortcut__key.is-rec { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 3px rgba(240,114,140,.12); }
 .shortcut__err { position: absolute; right: 0; top: calc(100% + 4px); font-size: 11.5px; white-space: nowrap; }
 .onb__scan { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; }
+
+/* Streak freezes held (Settings): striped pips like frozen days. */
+.freeze-pips { display: inline-flex; gap: 4px; margin-left: 6px; vertical-align: 1px; }
+.freeze-pips i { width: 10px; height: 10px; border-radius: 99px; box-shadow: inset 0 0 0 1.5px rgba(169,216,245,.9); }
+.freeze-pips i[data-on] { background: repeating-linear-gradient(45deg, rgba(169,216,245,.35) 0 2px, rgba(169,216,245,.95) 2px 4px); }

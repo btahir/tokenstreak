@@ -13,6 +13,8 @@ export interface TrailDay {
   goalMet: boolean;
   /** A rest day or streak freeze bridged this day. */
   frozen?: boolean;
+  /** Specifically a spent streak freeze (for copy; drawn like `frozen`). */
+  freeze?: boolean;
   tools: ToolShares;
   /** cacheRead / total, 0..1. */
   cacheShare: number;

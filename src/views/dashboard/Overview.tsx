@@ -156,7 +156,7 @@ function HeroTip({ hover }: { hover: TrailHover }) {
       <div className="tip__h">{d.isToday ? "Today" : d.date ? formatDayYear(d.date) : ""}</div>
       <b className="tip__num">{d.tokens ? formatTokens(d.tokens) : "No tokens"}</b>
       <div className="tip__foot">
-        {d.goalMet ? "Goal lit" : d.frozen ? "Rest day · streak kept" : d.tokens ? (goal ? `${Math.round((d.tokens / goal) * 100)}% of goal` : "Under goal") : d.isToday ? "Just getting started" : "Day off"}
+        {d.goalMet ? "Goal lit" : d.frozen ? (d.freeze ? "Streak freeze · streak kept" : "Rest day · streak kept") : d.tokens ? (goal ? `${Math.round((d.tokens / goal) * 100)}% of goal` : "Under goal") : d.isToday ? "Just getting started" : "Day off"}
         {d.tokens > 0 && ` · ${formatPercent(d.cacheShare)} cache`}
       </div>
       {tools.length > 0 && (
@@ -308,11 +308,12 @@ function YearOfLight({ snap }: { snap: AppSnapshot }) {
   const yearAgo = cols[0]?.[0]?.date ?? snap.today.date;
   const inYear = snap.days.filter((d) => d.date >= yearAgo);
   const lit = inYear.filter((d) => d.met).length;
-  const rests = cols.flat().filter((c) => c.frozen).length;
+  const rests = cols.flat().filter((c) => c.frozen && !c.freeze).length;
+  const freezes = cols.flat().filter((c) => c.freeze).length;
   return (
     <Card
       title="A year of light"
-      sub={`${lit} ${lit === 1 ? "day" : "days"} lit · longest streak ${snap.streak.longest}${rests ? ` · ${rests} rest ${rests === 1 ? "day" : "days"} bridged` : ""}`}
+      sub={`${lit} ${lit === 1 ? "day" : "days"} lit · longest streak ${snap.streak.longest}${rests ? ` · ${rests} rest ${rests === 1 ? "day" : "days"} bridged` : ""}${freezes ? ` · ${freezes} ${freezes === 1 ? "freeze" : "freezes"} spent` : ""}`}
       action={
         <div className="hlegend" aria-hidden>
           Less <i style={{ background: "var(--heat-0)" }} />

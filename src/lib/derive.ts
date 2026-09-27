@@ -71,7 +71,8 @@ export function buildTrailData(snap: AppSnapshot, opts: TrailBuildOptions = {}):
       date: d.date,
       tokens: d.total,
       goalMet: met,
-      frozen: !met && rest.has(weekdayIndex(d.date)),
+      frozen: d.frozen || (!met && rest.has(weekdayIndex(d.date))),
+      freeze: d.frozen,
       tools: dayTools(d),
       cacheShare: dayCacheShare(d),
       goal: g,
@@ -126,7 +127,7 @@ export function weekOrbs(snap: AppSnapshot): Orb[] {
       progress = snap.today.progress;
       state = snap.today.met ? "lit" : "today";
     } else if (row?.met) state = "lit";
-    else if (rest.has(weekdayIndex(date))) state = "frozen";
+    else if (row?.frozen || rest.has(weekdayIndex(date))) state = "frozen";
     else state = "missed";
     return { date, label, state, progress };
   });
@@ -338,7 +339,10 @@ export interface HeatCell {
   total: number;
   level: 0 | 1 | 2 | 3 | 4;
   met: boolean;
+  /** Bridged: a rest day or a spent streak freeze. */
   frozen: boolean;
+  /** A streak freeze was spent on this day. */
+  freeze: boolean;
   today: boolean;
   future: boolean;
   pad: boolean;
@@ -367,7 +371,8 @@ export function heatmapColumns(days: DayRow[], today: string, weeks = 53, weekSt
         total,
         level: heatLevel(total, goal),
         met,
-        frozen: !met && date <= today && date >= firstData && rest.has(weekdayIndex(date)) && total < goal,
+        frozen: !!row?.frozen || (!met && date <= today && date >= firstData && rest.has(weekdayIndex(date)) && total < goal),
+        freeze: !!row?.frozen,
         today: date === today,
         future: date > today,
         pad: date < firstData,
@@ -395,12 +400,21 @@ export function goalPresets(suggested: number): GoalPreset[] {
   ];
 }
 
-/** What your history would look like with `goal` applied to every past day. */
-export function simulateGoal(days: DayRow[], today: string, goal: number, restDays: number[] = []): { lit: number; current: number; best: number; litSet: Set<string> } {
+/** What your history would look like with `goal` applied to every past day
+ * (with streak freezes when `freezes` is on: same rules as goals.rs). */
+export function simulateGoal(
+  days: DayRow[],
+  today: string,
+  goal: number,
+  restDays: number[] = [],
+  freezes = false,
+): { lit: number; current: number; best: number; litSet: Set<string> } {
   const rest = new Set(restDays);
   let run = 0;
   let best = 0;
   let lit = 0;
+  let held = 0;
+  let sinceEarn = 0;
   const litSet = new Set<string>();
   let current = 0;
   const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
@@ -411,9 +425,17 @@ export function simulateGoal(days: DayRow[], today: string, goal: number, restDa
       litSet.add(d.date);
       run++;
       best = Math.max(best, run);
+      if (freezes && ++sinceEarn === 7) {
+        sinceEarn = 0;
+        held = Math.min(2, held + 1);
+      }
     } else if (d.date === today) {
       // today in progress never breaks a streak
-    } else if (!rest.has(weekdayIndex(d.date))) run = 0;
+    } else if (!rest.has(weekdayIndex(d.date))) {
+      if (freezes && run > 0 && held > 0) held--;
+      else run = 0;
+      sinceEarn = 0;
+    }
     if (d.date <= today) current = run;
   }
   return { lit, current, best, litSet };
@@ -434,7 +456,7 @@ export function revealFacts(snap: AppSnapshot, goal: number): RevealFacts {
   const days = snap.days;
   const active = days.filter((d) => d.total > 0);
   const busiest = active.reduce<DayRow | null>((b, d) => (!b || d.total > b.total ? d : b), null);
-  const sim = simulateGoal(days, snap.today.date, goal, snap.streak.restDays);
+  const sim = simulateGoal(days, snap.today.date, goal, snap.streak.restDays, snap.streak.freezesEnabled);
   const total = snap.lifetime.tokens.total;
   return {
     since: snap.lifetime.firstDate ?? snap.onboarding.firstActivity,
