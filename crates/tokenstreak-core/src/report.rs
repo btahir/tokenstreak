@@ -349,7 +349,8 @@ fn lifetime(ledger: &Ledger, c: &Computed) -> LifetimeView {
         favorite_tool: Tool::ALL.iter().copied().filter(|t| by_tool[t.index()] > 0).max_by_key(|t| by_tool[t.index()]),
         favorite_model: by_model.iter().max_by_key(|(_, v)| **v).map(|(m, _)| ledger.models[*m as usize].clone()),
         models_used: by_model.len() as u32,
-        projects: projects.len() as u32,
+        // count folders the way the By project breakdown groups them: by label across tools
+        projects: projects.iter().map(|p| ledger.projects[*p as usize].label.as_str()).collect::<FxHashSet<&str>>().len() as u32,
         cache_savings: savings,
     }
 }

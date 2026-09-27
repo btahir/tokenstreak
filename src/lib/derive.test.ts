@@ -224,3 +224,21 @@ describe("charts and tiers", () => {
     expect(tierInfo(400)).toMatchObject({ name: "Halo", next: null, daysToNext: null });
   });
 });
+
+describe("nice chart ticks", () => {
+  it("steps by 1, 2, 2.5 or 5 x 10^n", async () => {
+    const { niceTicks } = await import("./derive");
+    expect(niceTicks(63.7e6)).toEqual({ ticks: [25e6, 50e6, 75e6], top: 75e6 });
+    expect(niceTicks(39.38)).toEqual({ ticks: [20, 40], top: 40 });
+    expect(niceTicks(58)).toEqual({ ticks: [20, 40, 60], top: 60 });
+    expect(niceTicks(9)).toEqual({ ticks: [5, 10], top: 10 });
+    expect(niceTicks(0).top).toBe(1);
+    for (let m = 0.013; m < 1e10; m *= 1.37) {
+      const t = niceTicks(m);
+      expect(t.top).toBeGreaterThanOrEqual(m);
+      expect(t.ticks.length).toBeLessThanOrEqual(4);
+      expect(t.top / m).toBeLessThan(2.1);
+    }
+  });
+});
+

@@ -18,7 +18,7 @@ function unitOf(abs: number): [number, string] {
  * One decimal below 100 of a unit, none above; trailing ".0" is dropped.
  * `floor` rounds toward zero instead of to nearest (for values below a goal).
  */
-export function formatTokens(n: number, opts: { digits?: number; floor?: boolean } = {}): string {
+export function formatTokens(n: number, opts: { digits?: number; floor?: boolean; fixed?: boolean } = {}): string {
   if (!Number.isFinite(n)) return "0";
   const abs = Math.abs(n);
   const sign = n < 0 ? "−" : "";
@@ -30,7 +30,7 @@ export function formatTokens(n: number, opts: { digits?: number; floor?: boolean
   const places = v >= 100 && opts.digits === undefined ? 0 : d;
   const k = Math.pow(10, places);
   const r = opts.floor ? Math.floor(v * k + 1e-9) / k : Math.round(v * k) / k;
-  return `${sign}${trim(r.toFixed(places))}${u}`;
+  return `${sign}${opts.fixed ? r.toFixed(places) : trim(r.toFixed(places))}${u}`;
 }
 
 /**

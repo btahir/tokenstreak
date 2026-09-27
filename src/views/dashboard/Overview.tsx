@@ -1,7 +1,7 @@
 // "Your trail": the full Trail with a hover tooltip, stat tiles, charts, the
 // efficiency score, a year of light, breakdowns and recent achievements.
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import type { AppSnapshot, Breakdown, RangeKind } from "../../api/types";
 import { Badge } from "../../components/badges";
 import { BarChart, Heatmap, RankList, Sparkline } from "../../components/charts";
@@ -22,7 +22,7 @@ import {
   windowSums,
   yearWindow,
 } from "../../lib/derive";
-import { formatDate, formatInt, formatLongDate, formatPercent, formatTokens, formatTowardGoal, formatUsd, parseDate, TOOL_NAMES, TOOL_SHORT } from "../../lib/format";
+import { addDays, formatDate, formatInt, formatLongDate, formatPercent, formatTokens, formatTowardGoal, formatUsd, parseDate, prettyModel, TOOL_NAMES, TOOL_SHORT } from "../../lib/format";
 import { useReducedMotion, useResolvedTheme } from "../../lib/theme";
 import { useAppState, useBreakdown } from "../../state/store";
 import { TrailCanvas } from "../../trail/TrailCanvas";
@@ -332,12 +332,12 @@ function YearOfLight({ snap }: { snap: AppSnapshot }) {
           <i style={{ background: "var(--heat-1)" }} />
           <i style={{ background: "var(--heat-2)" }} />
           <i style={{ background: "var(--heat-3)" }} />
-          <i style={{ background: "var(--heat-4)" }} /> More · <i className="hlegend__goal" /> goal
+          <i style={{ background: "var(--heat-4)" }} /> More <span className="hlegend__sep" /> <i className="hlegend__goal" /> goal lit
         </div>
       }
       className="heat-card"
     >
-      <Heatmap columns={cols} />
+      <Heatmap columns={cols} weekStartsOn={snap.goals.weekStartsOn} />
     </Card>
   );
 }
@@ -349,7 +349,7 @@ function Breakdowns({ b, range }: { b: Breakdown | null; range: Range }) {
   const toolRows = b.byTool.filter((s) => s.tokens.total > 0);
   const cacheBy = toolRows.map((s) => {
     const d = s.tokens.input + s.tokens.cacheRead + s.tokens.cacheWrite;
-    return `${TOOL_SHORT[s.tool ?? "claude"]} ${Math.round((d ? s.tokens.cacheRead / d : 0) * 100)}%`;
+    return `${TOOL_SHORT[s.tool ?? "claude"]} ${formatPercent(d ? s.tokens.cacheRead / d : 0)}`;
   });
   const projects = b.byProject.slice(0, 5);
   const others = b.byProject.length - projects.length;
@@ -366,7 +366,7 @@ function Breakdowns({ b, range }: { b: Breakdown | null; range: Range }) {
       <Card title="By model" action={<span className="card__sub">Share of tokens</span>}>
         <RankList
           testId="by-model"
-          rows={b.byModel.slice(0, 5).map((s) => ({ key: s.key, label: s.label, value: s.share, display: formatPercent(s.share), color: `var(--tool-${s.tool ?? "other"})`, glyph: s.tool, mono: true, title: s.label }))}
+          rows={b.byModel.slice(0, 5).map((s) => ({ key: s.key, label: prettyModel(s.label), value: s.share, display: formatPercent(s.share), color: `var(--tool-${s.tool ?? "other"})`, glyph: s.tool, title: s.label }))}
         />
         {b.byModel.length > 5 && <div className="note">+ {b.byModel.length - 5} more {b.byModel.length - 5 === 1 ? "model" : "models"}</div>}
       </Card>
@@ -389,9 +389,11 @@ function Breakdowns({ b, range }: { b: Breakdown | null; range: Range }) {
 /* ---------------- achievements ---------------- */
 
 function RecentAchievements({ snap, go }: { snap: AppSnapshot; go: (r: Route) => void }) {
-  const unlocked = snap.achievements.filter((a) => a.unlockedAt).sort((a, b) => (b.unlockedAt ?? "").localeCompare(a.unlockedAt ?? ""));
-  const next = snap.achievements.filter((a) => !a.unlockedAt).sort((a, b) => b.progress / (b.target || 1) - a.progress / (a.target || 1))[0];
-  const shown = unlocked.slice(0, next ? 5 : 6);
+  // unlocked only, newest first; the last 90 days lead, older ones sit under "Earlier"
+  const unlocked = snap.achievements.filter((a) => a.unlockedAt).sort((a, b) => (b.unlockedAt ?? "").localeCompare(a.unlockedAt ?? "") || a.id.localeCompare(b.id));
+  const cutoff = addDays(snap.today.date, -90);
+  const shown = unlocked.slice(0, 6);
+  const firstOld = shown.findIndex((a) => a.unlockedAt! < cutoff);
   return (
     <Card
       title="Recent achievements"
@@ -403,11 +405,13 @@ function RecentAchievements({ snap, go }: { snap: AppSnapshot; go: (r: Route) =>
       }
     >
       <div className="badges-row" data-testid="recent-achievements">
-        {shown.map((a) => (
-          <Badge key={a.id} a={a} size={72} compact meta={formatDate(a.unlockedAt!)} />
+        {shown.map((a, i) => (
+          <Fragment key={a.id}>
+            {i === firstOld && <div className="badges-row__sep">Earlier</div>}
+            <Badge a={a} size={72} compact meta={formatDate(a.unlockedAt!)} />
+          </Fragment>
         ))}
-        {next && <Badge a={next} size={72} compact meta={progressMeta(next)} />}
-        {!shown.length && !next && <div className="note">Your first badge arrives with your first goal day.</div>}
+        {!shown.length && <div className="note">Your first badge arrives with your first goal day.</div>}
       </div>
     </Card>
   );

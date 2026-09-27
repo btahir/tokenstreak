@@ -5,9 +5,9 @@ import { useState } from "react";
 import type { AppSnapshot, Breakdown, RangeKind } from "../../api/types";
 import { AreaChart, MiniBars } from "../../components/charts";
 import { IconDownload, IconLock } from "../../components/icons";
-import { Card, Delta, Glyph, Seg, Tile } from "../../components/ui";
+import { Card, Glyph, Seg, Tile } from "../../components/ui";
 import { cacheShareOf } from "../../lib/derive";
-import { formatDate, formatInt, formatPercent, formatTimes, formatTokens, formatUsd, plural, TOOL_NAMES } from "../../lib/format";
+import { formatDate, formatInt, formatPercent, formatTimes, formatTokens, formatUsd, plural, prettyModel, TOOL_NAMES } from "../../lib/format";
 import { useApi, useBreakdown } from "../../state/store";
 import { PageHead } from "./PageHead";
 
@@ -63,11 +63,11 @@ function StatsBody({ snap, b }: { snap: AppSnapshot; b: Breakdown }) {
   const share = cacheShareOf(t);
   const payoff = t.cacheWrite > 0 ? t.cacheRead / t.cacheWrite : 0;
   const parts = [
-    { key: "cacheRead", label: "Cache read", value: t.cacheRead, color: "var(--moon)", note: "Context reused from cache. The cheapest tokens there are." },
-    { key: "cacheWrite", label: "Cache write", value: t.cacheWrite, color: "#8B6CF0", note: "Context stored so later turns can reuse it." },
-    { key: "input", label: "Input", value: t.input, color: "var(--tool-claude)", note: "Fresh prompt tokens sent to the model." },
-    { key: "output", label: "Output", value: t.output, color: "var(--tool-codex)", note: "What the model wrote back, including reasoning." },
-    { key: "other", label: "Other", value: t.other, color: "var(--tool-other)", note: "Tool-reported extras (e.g. Gemini thoughts)." },
+    { key: "cacheRead", label: "Cache read", value: t.cacheRead, color: "var(--tt-cache-read)", note: "Context reused from cache. The cheapest tokens there are." },
+    { key: "cacheWrite", label: "Cache write", value: t.cacheWrite, color: "var(--tt-cache-write)", note: "Context stored so later turns can reuse it." },
+    { key: "input", label: "Input", value: t.input, color: "var(--tt-input)", note: "Fresh prompt tokens sent to the model." },
+    { key: "output", label: "Output", value: t.output, color: "var(--tt-output)", note: "What the model wrote back, including reasoning." },
+    { key: "other", label: "Other", value: t.other, color: "var(--tt-other)", note: "Tool-reported extras (e.g. Gemini thoughts)." },
   ].filter((p) => p.value > 0);
   const total = t.total || 1;
   const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -86,10 +86,14 @@ function StatsBody({ snap, b }: { snap: AppSnapshot; b: Breakdown }) {
           <div className="tile__foot">{formatUsd(b.efficiency.costPerMillion)} per 1M tokens</div>
         </Tile>
         <Tile label="Sessions" value={formatInt(b.sessions)}>
-          <div className="tile__foot">{formatInt(b.messages)} messages · {formatTokens(b.efficiency.tokensPerSession)} each</div>
+          <div className="tile__foot">
+            {formatTokens(b.efficiency.tokensPerSession)} tokens per session · {formatInt(b.messages)} messages
+          </div>
         </Tile>
         <Tile label="Active days" value={formatInt(b.activeDays)}>
-          <Delta>{plural(lit, "goal day")} lit</Delta>
+          <div className="tile__foot">
+            {formatInt(lit)} lit · of {plural(b.series.length, "day")} in range
+          </div>
         </Tile>
       </div>
 
@@ -142,17 +146,25 @@ function StatsBody({ snap, b }: { snap: AppSnapshot; b: Breakdown }) {
 
       <div className="grid2">
         <Card title="Estimated cost per day" sub={`Average ${formatUsd(b.efficiency.costPerActiveDay)} on active days · estimates from the bundled price list`}>
-          <AreaChart points={b.series.map((d) => ({ key: d.date, value: d.cost }))} height={184} color="var(--accent)" label="Estimated cost per day" />
+          <AreaChart points={b.series.map((d) => ({ key: d.date, value: d.cost }))} height={184} color="var(--chart-neutral)" label="Estimated cost per day" />
         </Card>
         <Card title="When you work" sub={b.hourly.some((v) => v > 0) ? `Busiest around ${hourName(peakHour)} · ${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][peakDay]}s are your big day` : "No activity in this range"}>
           <div className="when">
-            <MiniBars values={b.hourly} labels={hourLabels} height={96} label="Tokens by hour of day" />
-            <MiniBars values={b.weekday} labels={dayNames.map((d) => d[0]!)} height={72} label="Tokens by weekday" color="var(--tool-gemini)" />
+            <MiniBars values={b.hourly} labels={hourLabels} height={96} label="Tokens by hour of day" color="var(--chart-neutral)" />
+            <MiniBars values={b.weekday} labels={dayNames.map((d) => d[0]!)} height={72} label="Tokens by weekday" color="var(--chart-neutral)" />
           </div>
         </Card>
       </div>
 
-      <Card title="Biggest sessions" sub="Project names stay on this Mac" action={<IconLock size={13} />}>
+      <Card
+        title="Biggest sessions"
+        sub="Project names stay on this Mac"
+        action={
+          <span className="card__sub private-tag">
+            <IconLock size={13} /> Private
+          </span>
+        }
+      >
         {b.topSessions.length ? (
           <table className="sessions" data-testid="top-sessions">
             <thead>
@@ -180,8 +192,10 @@ function StatsBody({ snap, b }: { snap: AppSnapshot; b: Breakdown }) {
                     <td className="mono">{s.project || "—"}</td>
                     <td>{formatDate(s.startedAt.slice(0, 10))}</td>
                     <td>{mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${mins} min`}</td>
-                    <td className="mono sessions__model">{s.models[0] ?? "—"}</td>
-                    <td className="num">{formatTokens(s.tokens)}</td>
+                    <td className="mono sessions__model" title={s.models[0] ? prettyModel(s.models[0]) : undefined}>
+                      {s.models[0] ?? "—"}
+                    </td>
+                    <td className="num">{formatTokens(s.tokens, { digits: 1, fixed: true })}</td>
                     <td className="num">{formatUsd(s.cost)}</td>
                   </tr>
                 );
@@ -201,9 +215,11 @@ function StatsBody({ snap, b }: { snap: AppSnapshot; b: Breakdown }) {
           <Fact label="Best day" value={L.bestDay ? formatTokens(L.bestDay.tokens) : "—"} sub={L.bestDay ? formatDate(L.bestDay.date) : undefined} />
           <Fact label="Longest streak" value={`${snap.streak.longest}`} sub={snap.streak.longestStart ? `from ${formatDate(snap.streak.longestStart)}` : undefined} />
           <Fact label="Sessions" value={formatInt(L.sessions)} />
+          <Fact label="Messages" value={formatInt(L.messages)} />
           <Fact label="Favourite agent" value={L.favoriteTool ? TOOL_NAMES[L.favoriteTool] : "—"} small />
-          <Fact label="Favourite model" value={L.favoriteModel ?? "—"} small mono />
-          <Fact label="Models · projects" value={`${L.modelsUsed} · ${L.projects}`} />
+          <Fact label="Favourite model" value={L.favoriteModel ? prettyModel(L.favoriteModel) : "—"} title={L.favoriteModel ?? undefined} small />
+          <Fact label="Models used" value={formatInt(L.modelsUsed)} />
+          <Fact label="Projects" value={formatInt(L.projects)} />
           <Fact label="Saved by caching" value={formatUsd(L.cacheSavings, { cents: false })} sub="estimate" />
         </div>
       </Card>
@@ -211,11 +227,11 @@ function StatsBody({ snap, b }: { snap: AppSnapshot; b: Breakdown }) {
   );
 }
 
-function Fact({ label, value, sub, small, mono }: { label: string; value: string; sub?: string; small?: boolean; mono?: boolean }) {
+function Fact({ label, value, sub, small, mono, title }: { label: string; value: string; sub?: string; small?: boolean; mono?: boolean; title?: string }) {
   return (
     <div className="fact">
       <span className="ts-label">{label}</span>
-      <b className={`${small ? "fact--small" : ""}${mono ? " fact--mono" : ""}`} title={value}>
+      <b className={`${small ? "fact--small" : ""}${mono ? " fact--mono" : ""}`} title={title ?? value}>
         {value}
       </b>
       {sub && <span className="fact__sub">{sub}</span>}

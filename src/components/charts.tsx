@@ -5,10 +5,25 @@
 
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Tool } from "../api/types";
-import type { BarRow, HeatCell } from "../lib/derive";
-import { formatDate, formatTokens, formatUsd, monthShort, TOOL_SHORT, TOOLS } from "../lib/format";
+import { niceTicks, type BarRow, type HeatCell } from "../lib/derive";
+import { formatDate, formatTokens, formatUsd, monthShort, TOOL_SHORT, TOOLS, weekdayShort } from "../lib/format";
 
 const COL: Record<Tool, string> = { claude: "var(--tool-claude)", codex: "var(--tool-codex)", gemini: "var(--tool-gemini)" };
+
+/** The element's width in CSS px, so SVGs draw 1:1 and text is never stretched. */
+function useWidth<T extends HTMLElement>(fallback: number): [React.RefObject<T | null>, number] {
+  const ref = useRef<T>(null);
+  const [w, setW] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setW(el.clientWidth));
+    ro.observe(el);
+    setW(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, w || fallback];
+}
 
 /* ---------------- tooltip ---------------- */
 
@@ -34,32 +49,36 @@ export interface BarChartProps {
 }
 
 export function BarChart({ rows, height = 200, goal, labelEvery = 1, heading, testId }: BarChartProps) {
-  const wrap = useRef<HTMLDivElement>(null);
+  const [wrap, W] = useWidth<HTMLDivElement>(640);
   const [hover, setHover] = useState<number | null>(null);
-  const W = 640;
   const H = height;
-  const [pt, pr, pb, pl] = [10, 40, 22, 2];
+  const [pt, pr, pb, pl] = [12, 44, 22, 2];
   const iw = W - pl - pr;
   const ih = H - pt - pb;
-  const max = Math.max(goal ?? 0, ...rows.map((r) => r.total), 1) * 1.08;
+  const scale = niceTicks(Math.max(goal ?? 0, ...rows.map((r) => r.total), 1));
+  const max = scale.top;
   const bw = iw / Math.max(1, rows.length);
   const gap = Math.max(2, bw * 0.28);
   const w = Math.max(1, bw - gap);
   const rad = Math.min(4, w / 2);
   const y = (v: number) => pt + ih - (ih * v) / max;
   const hovered = hover !== null ? rows[hover] : null;
+  // never let axis labels crowd: at least ~56 px per label
+  const every = Math.max(labelEvery, Math.ceil(56 / Math.max(1, bw)));
 
   return (
     <div className="chart" ref={wrap} data-testid={testId} onMouseLeave={() => setHover(null)}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{ overflow: "visible" }} role="img" aria-label="Tokens per period, stacked by agent">
-        {[1, 2, 3].map((i) => {
-          const yy = pt + ih - (ih * i) / 3;
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} style={{ overflow: "visible" }} role="img" aria-label="Tokens per period, stacked by agent">
+        {scale.ticks.map((v) => {
+          const yy = y(v);
           return (
-            <g key={i}>
+            <g key={v}>
               <line x1={pl} x2={pl + iw} y1={yy} y2={yy} stroke="var(--chart-grid)" />
-              <text x={pl + iw + 6} y={yy + 3.5} className="chart__tick">
-                {formatTokens((max * i) / 3)}
-              </text>
+              {!(goal && Math.abs(y(goal) - yy) < 14) && (
+                <text x={pl + iw + 6} y={yy + 3.5} className="chart__tick">
+                  {formatTokens(v)}
+                </text>
+              )}
             </g>
           );
         })}
@@ -86,7 +105,7 @@ export function BarChart({ rows, height = 200, goal, labelEvery = 1, heading, te
               })}
               {r.met && <circle cx={x + w / 2} cy={top - 5} r={1.9} fill="var(--success)" />}
               {r.isCurrent && !r.total && <rect x={x} y={pt + ih - 2} width={w} height={2} rx={1} fill="var(--line-strong)" />}
-              {r.label && i % labelEvery === 0 && (
+              {r.label && (rows.length - 1 - i) % every === 0 && (
                 <text x={x + w / 2} y={H - 6} textAnchor="middle" className="chart__tick">
                   {r.label}
                 </text>
@@ -106,7 +125,7 @@ export function BarChart({ rows, height = 200, goal, labelEvery = 1, heading, te
         ) : null}
       </svg>
       {hovered && hover !== null && (
-        <Tip x={((pl + hover * bw + bw / 2) / W) * (wrap.current?.clientWidth ?? W)} y={((y(hovered.total) - 6) / H) * H}>
+        <Tip x={pl + hover * bw + bw / 2} y={y(hovered.total) - 6}>
           <div className="tip__h">{heading ? heading(hovered) : hovered.key}</div>
           <b className="tip__num">{formatTokens(hovered.total)}</b>
           <div className="tip__rows">
@@ -156,19 +175,19 @@ export function Sparkline({ values, height = 34, color = "var(--moon)", fill = t
 /** A line chart with an area fill, value ticks and hover (used on Stats). */
 export function AreaChart({ points, height = 160, color = "var(--accent)", format = formatUsd, label }: { points: { key: string; value: number }[]; height?: number; color?: string; format?: (n: number) => string; label: string }) {
   const id = useId().replace(/:/g, "");
-  const wrap = useRef<HTMLDivElement>(null);
+  const [wrap, W] = useWidth<HTMLDivElement>(640);
   const [hover, setHover] = useState<number | null>(null);
-  const W = 640;
   const H = height;
-  const [pt, pr, pb, pl] = [10, 44, 22, 2];
+  const [pt, pr, pb, pl] = [12, 48, 22, 2];
   const iw = W - pl - pr;
   const ih = H - pt - pb;
   const n = points.length;
-  const max = Math.max(...points.map((p) => p.value), 0.0001) * 1.1;
+  const scale = niceTicks(Math.max(...points.map((p) => p.value), 0.0001));
+  const max = scale.top;
   const X = (i: number) => pl + (n > 1 ? (i / (n - 1)) * iw : iw / 2);
   const Y = (v: number) => pt + ih - (ih * v) / max;
   const d = points.map((p, i) => `${i ? "L" : "M"}${X(i).toFixed(1)} ${Y(p.value).toFixed(1)}`).join("");
-  const every = Math.max(1, Math.ceil(n / 8));
+  const every = Math.max(1, Math.ceil(n / Math.max(3, Math.floor(iw / 70))));
   const hp = hover !== null ? points[hover] : null;
   return (
     <div className="chart" ref={wrap} onMouseLeave={() => setHover(null)}>
@@ -176,7 +195,6 @@ export function AreaChart({ points, height = 160, color = "var(--accent)", forma
         viewBox={`0 0 ${W} ${H}`}
         width="100%"
         height={H}
-        preserveAspectRatio="none"
         style={{ overflow: "visible" }}
         role="img"
         aria-label={label}
@@ -192,13 +210,13 @@ export function AreaChart({ points, height = 160, color = "var(--accent)", forma
             <stop offset="1" stopColor={color} stopOpacity="0" />
           </linearGradient>
         </defs>
-        {[1, 2, 3].map((i) => {
-          const yy = pt + ih - (ih * i) / 3;
+        {scale.ticks.map((v) => {
+          const yy = Y(v);
           return (
-            <g key={i}>
+            <g key={v}>
               <line x1={pl} x2={pl + iw} y1={yy} y2={yy} stroke="var(--chart-grid)" />
               <text x={pl + iw + 6} y={yy + 3.5} className="chart__tick">
-                {format((max * i) / 3)}
+                {format === formatUsd ? formatUsd(v, { cents: !Number.isInteger(v) }) : format(v)}
               </text>
             </g>
           );
@@ -208,7 +226,7 @@ export function AreaChart({ points, height = 160, color = "var(--accent)", forma
         {points.map((p, i) =>
           i % every === 0 ? (
             <text key={p.key} x={X(i)} y={H - 6} textAnchor="middle" className="chart__tick">
-              {p.key.length === 10 ? `${Number(p.key.slice(8))} ${monthShort(p.key)}` : p.key}
+              {p.key.length === 10 ? formatDate(p.key) : p.key}
             </text>
           ) : null,
         )}
@@ -220,7 +238,7 @@ export function AreaChart({ points, height = 160, color = "var(--accent)", forma
         )}
       </svg>
       {hp && hover !== null && (
-        <Tip x={(X(hover) / W) * (wrap.current?.clientWidth ?? W)} y={Y(hp.value)}>
+        <Tip x={X(hover)} y={Y(hp.value)}>
           <div className="tip__h">{hp.key.length === 10 ? formatDate(hp.key) : hp.key}</div>
           <b className="tip__num">{format(hp.value)}</b>
         </Tip>
@@ -249,20 +267,17 @@ export function MiniBars({ values, labels, height = 120, highlight, format = for
 
 /* ---------------- heatmap ---------------- */
 
-export function Heatmap({ columns, gap = 3, minCell = 10, maxCell = 17 }: { columns: HeatCell[][]; gap?: number; minCell?: number; maxCell?: number }) {
-  const wrap = useRef<HTMLDivElement>(null);
+export function Heatmap({ columns: all, gap: gapMax = 3, minCell = 9, maxCell = 17, weekStartsOn = "monday" }: { columns: HeatCell[][]; gap?: number; minCell?: number; maxCell?: number; weekStartsOn?: "monday" | "sunday" }) {
+  const [wrap, avail] = useWidth<HTMLDivElement>(0);
   const [hover, setHover] = useState<{ c: HeatCell; x: number; y: number } | null>(null);
-  const [avail, setAvail] = useState(0);
-  useEffect(() => {
-    const el = wrap.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => setAvail(el.clientWidth));
-    ro.observe(el);
-    setAvail(el.clientWidth);
-    return () => ro.disconnect();
-  }, []);
+  const LABEL_W = 28;
+  const room = Math.max(0, avail - LABEL_W);
+  const gap = room && room / all.length < 12 ? 2 : gapMax;
+  // fit the grid to the card: shrink cells, then drop the oldest weeks if needed
+  const fitCols = room ? Math.min(all.length, Math.floor((room + gap) / (minCell + gap))) : all.length;
+  const columns = fitCols < all.length ? all.slice(all.length - fitCols) : all;
   const n = Math.max(1, columns.length);
-  const cell = avail ? Math.max(minCell, Math.min(maxCell, (avail - gap * (n - 1)) / n)) : 12.4;
+  const cell = room ? Math.max(minCell, Math.min(maxCell, (room - gap * (n - 1)) / n)) : 12;
   const months = useMemo(() => {
     const out: { label: string; col: number }[] = [];
     let prev = "";
@@ -277,31 +292,41 @@ export function Heatmap({ columns, gap = 3, minCell = 10, maxCell = 17 }: { colu
     return out.filter((m, i, a) => i === 0 || m.col - a[i - 1]!.col >= 3);
   }, [columns]);
   const width = columns.length * (cell + gap) - gap;
+  // Mon, Wed, Fri rows
+  const dayRows = weekStartsOn === "monday" ? [0, 2, 4] : [1, 3, 5];
+  const dayName = (r: number) => weekdayShort(columns[0]?.[r]?.date ?? "2026-09-21");
   return (
     <div className="heat-wrap" ref={wrap} onMouseLeave={() => setHover(null)}>
-      <div className="heat-months" style={{ width }}>
+      <div className="heat-months" style={{ width, marginLeft: LABEL_W }}>
         {months.map((m) => (
           <span key={`${m.label}${m.col}`} style={{ left: m.col * (cell + gap) }}>
             {m.label}
           </span>
         ))}
       </div>
-      <div className="heat" style={{ gridTemplateRows: `repeat(7, ${cell}px)`, gridAutoColumns: `${cell}px`, gap }} role="grid" aria-label="Daily tokens for the last year">
-        {columns.flatMap((col, ci) =>
-          col.map((c, ri) => (
-            <i
-              key={c.date}
-              data-l={c.level}
-              data-goal={c.met ? "" : undefined}
-              data-frozen={c.frozen ? "" : undefined}
-              data-today={c.today ? "" : undefined}
-              data-future={c.future ? "" : undefined}
-              data-pad={c.pad && !c.future ? "" : undefined}
-              style={{ gridColumn: ci + 1, gridRow: ri + 1 }}
-              onMouseEnter={() => !c.future && !c.pad && setHover({ c, x: ci * (cell + gap) + cell / 2, y: ri * (cell + gap) + 18 })}
-            />
-          )),
-        )}
+      <div className="heat-body">
+        <div className="heat-days" style={{ width: LABEL_W, gridTemplateRows: `repeat(7, ${cell}px)`, rowGap: gap }} aria-hidden>
+          {Array.from({ length: 7 }, (_, r) => (
+            <span key={r}>{dayRows.includes(r) ? dayName(r) : ""}</span>
+          ))}
+        </div>
+        <div className="heat" style={{ gridTemplateRows: `repeat(7, ${cell}px)`, gridAutoColumns: `${cell}px`, gap }} role="img" aria-label={`Daily tokens for the last ${columns.length} weeks`}>
+          {columns.flatMap((col, ci) =>
+            col.map((c, ri) => (
+              <i
+                key={c.date}
+                data-l={c.level}
+                data-goal={c.met ? "" : undefined}
+                data-frozen={c.frozen ? "" : undefined}
+                data-today={c.today ? "" : undefined}
+                data-future={c.future ? "" : undefined}
+                data-pad={c.pad && !c.future ? "" : undefined}
+                style={{ gridColumn: ci + 1, gridRow: ri + 1 }}
+                onMouseEnter={() => !c.future && !c.pad && setHover({ c, x: LABEL_W + ci * (cell + gap) + cell / 2, y: ri * (cell + gap) + 18 })}
+              />
+            )),
+          )}
+        </div>
       </div>
       {hover && (
         <Tip x={hover.x} y={hover.y} align={hover.x < 80 ? "left" : hover.x > width - 80 ? "right" : "center"}>

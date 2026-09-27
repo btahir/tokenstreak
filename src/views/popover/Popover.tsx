@@ -7,8 +7,8 @@ import type { AppSnapshot } from "../../api/types";
 import { IconGear, IconRefresh, IconWindow, Spark, Wordmark } from "../../components/icons";
 import { Chip, Delta, Glyph, Meter, Progress, StreakPill, Tile, useCountUp } from "../../components/ui";
 import { IconArrow } from "../../components/icons";
-import { buildTrailData, celebrationLine, progressCopy, streakMood, todayTiles, trailSummary, weekOrbs } from "../../lib/derive";
-import { formatAgo, formatInt, formatTokens, formatTowardGoal, formatUsd, splitUnit, TOOL_NAMES, TOOLS } from "../../lib/format";
+import { buildTrailData, cacheDeltaCopy, celebrationLine, leanCopy, progressCopy, streakMood, todayTiles, trailSummary, weekOrbs } from "../../lib/derive";
+import { formatAgo, formatChange, formatInt, formatTokens, formatTowardGoal, formatUsd, percentValue, splitUnit, TOOL_SHORT, TOOLS } from "../../lib/format";
 import { playCue } from "../../lib/sound";
 import { useReducedMotion, useResolvedTheme } from "../../lib/theme";
 import { acknowledgeCelebration, getState, useApi, useAppState, useSnapshot } from "../../state/store";
@@ -116,6 +116,8 @@ function PopoverMain({ snap }: { snap: AppSnapshot }) {
   }, [celebration, visible]);
 
   const tiles = todayTiles(snap);
+  const cacheDelta = cacheDeltaCopy(tiles.cacheDeltaPts);
+  const lean = leanCopy(tiles.leaner, formatChange);
   const mood = streakMood(snap);
   const copy = progressCopy(t);
   const heroValue = useCountUp(t.tokens.total, 900);
@@ -221,26 +223,24 @@ function PopoverMain({ snap }: { snap: AppSnapshot }) {
 
         <div className="ptiles">
           <Tile label="Est. cost" value={formatUsd(tiles.cost)}>
-            {tiles.leaner === null && <span className="tile__hint">estimate</span>}
+            {tiles.usualCost !== null ? <span className="tile__sub">usual day {formatUsd(tiles.usualCost, { cents: tiles.usualCost < 10 })}</span> : <span className="tile__hint">estimate</span>}
           </Tile>
-          <Tile label="From cache" value={Math.round(tiles.cacheShare * 100)} unit="%">
-            {tiles.cacheDeltaPts !== null && (
+          <Tile label="From cache" value={percentValue(tiles.cacheShare)} unit="%">
+            {cacheDelta ? (
               <Delta lean>
-                {tiles.cacheDeltaPts === 0 ? (
-                  "same as usual"
-                ) : (
-                  <>
-                    <IconArrow size={10} dir={tiles.cacheDeltaPts > 0 ? "up" : "down"} /> {Math.abs(tiles.cacheDeltaPts)} vs usual
-                  </>
-                )}
+                <IconArrow size={10} dir={tiles.cacheDeltaPts! > 0 ? "up" : "down"} /> {cacheDelta}
               </Delta>
+            ) : (
+              tiles.cacheDeltaPts !== null && <span className="tile__sub">about usual</span>
             )}
           </Tile>
           <Tile label="Per 1M" value={t.tokens.total > 0 ? formatUsd(tiles.perMillion) : "—"}>
-            {tiles.leaner !== null && Math.abs(tiles.leaner) >= 0.01 && (
-              <Delta lean={tiles.leaner > 0} warm={tiles.leaner < 0}>
-                {tiles.leaner > 0 ? `${Math.round(tiles.leaner * 100)}% leaner` : `+${Math.round(-tiles.leaner * 100)}% vs usual`}
+            {lean ? (
+              <Delta lean={tiles.leaner! > 0} warm={tiles.leaner! < 0}>
+                {lean}
               </Delta>
+            ) : (
+              tiles.leaner !== null && <span className="tile__sub">about usual</span>
             )}
           </Tile>
         </div>
@@ -304,7 +304,7 @@ function Agents({ snap }: { snap: AppSnapshot }) {
             {used.map((b) => (
               <Chip key={b.tool}>
                 <Glyph tool={b.tool} />
-                {b.tool === "claude" ? "Claude Code" : TOOL_NAMES[b.tool].replace(" CLI", "")} <em>{formatTokens(b.tokens)}</em>
+                {TOOL_SHORT[b.tool]} <em>{formatTokens(b.tokens)}</em>
               </Chip>
             ))}
           </div>

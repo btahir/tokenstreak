@@ -4,7 +4,7 @@
 import type { AppSnapshot, Breakdown, DayRow, TodayView, TokenCounts, Tool } from "../api/types";
 import { tierFor, nextTier } from "../trail/Trail";
 import type { ToolShares, TrailData, TrailDay } from "../trail/types";
-import { addDays, friendlyGoal, parseDate } from "./format";
+import { addDays, formatDate, friendlyGoal, parseDate } from "./format";
 
 /* ---------------- per-day helpers ---------------- */
 
@@ -221,6 +221,8 @@ export interface Baseline {
   /** cacheShare uses the exact definition (rows carry input/cacheWrite). */
   exactCache: boolean;
   costPerMillion: number;
+  /** Average estimated cost per active day. */
+  costPerDay: number;
   medianTokens: number;
   sessionLow: number;
   sessionHigh: number;
@@ -250,6 +252,7 @@ export function baseline(days: DayRow[], today: string, n = 30): Baseline {
     cacheShare: cacheDenom > 0 ? cache / cacheDenom : 0,
     exactCache: split,
     costPerMillion: tokens > 0 ? cost / (tokens / 1e6) : 0,
+    costPerDay: act.length ? cost / act.length : 0,
     medianTokens: quantile(totals, 0.5),
     sessionLow: quantile(perSession, 0.25),
     sessionHigh: quantile(perSession, 0.75),
@@ -265,6 +268,8 @@ export interface TodayTiles {
   perMillion: number;
   /** Fraction leaner than usual (positive = cheaper per token); null without history. */
   leaner: number | null;
+  /** Your usual cost on an active day; null without history. */
+  usualCost: number | null;
 }
 
 export function todayTiles(snap: AppSnapshot): TodayTiles {
@@ -280,7 +285,22 @@ export function todayTiles(snap: AppSnapshot): TodayTiles {
     cacheDeltaPts: hasBase ? Math.round((approxToday - base.cacheShare) * 100) : null,
     perMillion,
     leaner: hasBase && base.costPerMillion > 0 ? (base.costPerMillion - perMillion) / base.costPerMillion : null,
+    usualCost: base.activeDays >= 3 ? base.costPerDay : null,
   };
+}
+
+/** Delta chip copy for today's cache share vs usual (null hides the chip below 2 points). */
+export function cacheDeltaCopy(pts: number | null): string | null {
+  if (pts === null || Math.abs(pts) < 2) return null;
+  return `${Math.abs(pts)} pts ${pts > 0 ? "above" : "under"} usual`;
+}
+
+/** Delta chip copy for cost per token vs usual: "12% leaner than usual", "17% pricier than usual". */
+export function leanCopy(leaner: number | null, fmtChange: (f: number) => string): string | null {
+  if (leaner === null || Math.abs(leaner) < 0.02) return null;
+  if (leaner > 0) return `${fmtChange(-leaner)} leaner than usual`;
+  // pricier: (perM - usual) / usual = -leaner
+  return `${fmtChange(-leaner)} pricier than usual`;
 }
 
 /* ---------------- progress copy ---------------- */
@@ -393,7 +413,7 @@ export function efficiency(period: { tokens: TokenCounts; cost: number; sessions
   const contributors: Contributor[] = [
     { key: "cache", label: "Cache reuse", value: `${Math.round(share * 100)}%`, score: cs },
     { key: "cost", label: "Cost per 1M", value: fmtUsd(perM), score: ks },
-    { key: "payoff", label: "Cache payoff", value: payoff >= 50 && t.cacheWrite === 0 ? "—" : `×${payoff >= 100 ? Math.round(payoff) : Number(payoff.toFixed(1))}`, score: total > 0 ? payoffAbs : 0 },
+    { key: "payoff", label: "Cache payoff", value: payoff >= 50 && t.cacheWrite === 0 ? "—" : `${payoff >= 100 ? Math.round(payoff) : Number(payoff.toFixed(1))}×`, score: total > 0 ? payoffAbs : 0 },
     { key: "focus", label: "Session focus", value: perSession > 0 ? fmt(perSession) : "—", score: total > 0 ? focus : 0 },
   ];
   const score = total > 0 ? Math.round((cs * 0.34 + ks * 0.26 + payoffAbs * 0.2 + focus * 0.2) * 100) : 0;
@@ -585,7 +605,7 @@ export function dailyBars(days: DayRow[], today: string, n = 30): BarRow[] {
     const d = byDate.get(date);
     out.push({
       key: date,
-      label: String(parseDate(date).getUTCDate()),
+      label: formatDate(date),
       claude: d?.claude ?? 0,
       codex: d?.codex ?? 0,
       gemini: d?.gemini ?? 0,
@@ -602,7 +622,7 @@ export function periodBars(rows: AppSnapshot["weeks"], kind: "week" | "month", n
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   return rows.slice(-n).map((r) => {
     const d = parseDate(r.start);
-    const label = kind === "month" ? MONTHS[d.getUTCMonth()]! : `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+    const label = kind === "month" ? (d.getUTCMonth() === 0 ? `${MONTHS[0]} ${d.getUTCFullYear()}` : MONTHS[d.getUTCMonth()]!) : formatDate(r.start);
     return {
       key: r.key,
       label,
@@ -633,4 +653,20 @@ export function toolShareLine(b: Breakdown): { tool: Tool; share: number }[] {
 /** Days with any usage in the snapshot (for "days lit" counts). */
 export function litDays(days: DayRow[]): number {
   return days.filter((d) => d.met).length;
+}
+
+/* ---------------- chart scales ---------------- */
+
+/**
+ * "Nice" axis ticks (1, 2, 2.5 or 5 × 10^n steps) covering `max` with about
+ * `count` gridlines: 63.7M -> [25M, 50M, 75M], $39.38 -> [$20, $40].
+ * Returns the ticks and the domain top.
+ */
+export function niceTicks(max: number, count = 3): { ticks: number[]; top: number } {
+  if (!(max > 0)) return { ticks: [1], top: 1 };
+  const raw = max / count;
+  const p = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * p).find((s) => s >= raw * 0.999) ?? 10 * p;
+  const n = Math.max(1, Math.ceil(max / step - 1e-9));
+  return { ticks: Array.from({ length: n }, (_, i) => +(step * (i + 1)).toPrecision(12)), top: step * n };
 }

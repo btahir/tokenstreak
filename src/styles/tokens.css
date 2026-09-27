@@ -63,6 +63,14 @@
   --tool-gemini: #8B6CF0;  --tool-gemini-soft: #E2DAFF;
   --tool-other:  #9A93A8;
 
+  /* ---- Token types and neutral charts: their own palette, never tool hues ---- */
+  --tt-cache-read: #8CC4EA;   /* moon */
+  --tt-cache-write: #B3A9C9;  /* lavender grey */
+  --tt-input: #E2C391;        /* sand */
+  --tt-output: #5A5068;       /* ink-2 */
+  --tt-other: #C9C2D2;
+  --chart-neutral: #7C87B8;   /* cost line, time-of-day bars (slate) */
+
   /* ---- Light theme ("golden hour") ---- */
   --bg: #FFF8F1;             /* window / popover background */
   --bg-sunken: #FBF0E6;      /* wells, heatmap empty cells */
@@ -132,6 +140,7 @@
   --success: #FFC46B; --success-soft: rgba(255,196,107,0.14);
   --heat-0: #3A3257; --heat-1: #553F85; --heat-2: #9A4C86; --heat-3: #F0876E; --heat-4: #FFC46B;
   --heat-dot: rgba(35,29,51,.85);
+  --tt-output: #CFC3D9; --tt-other: #6D6485; --chart-neutral: #AFB8E6;
   --chart-grid: rgba(255,244,234,0.07);
   --scrim: rgba(8,6,16,0.55);
   --grain-opacity: 0.05;
@@ -149,6 +158,7 @@
     --success: #FFC46B; --success-soft: rgba(255,196,107,0.14);
     --heat-0: #3A3257; --heat-1: #553F85; --heat-2: #9A4C86; --heat-3: #F0876E; --heat-4: #FFC46B;
     --heat-dot: rgba(35,29,51,.85);
+    --tt-output: #CFC3D9; --tt-other: #6D6485; --chart-neutral: #AFB8E6;
     --chart-grid: rgba(255,244,234,0.07); --scrim: rgba(8,6,16,0.55); --grain-opacity: 0.05;
     --shadow-1: 0 1px 2px rgba(0,0,0,0.3), 0 0 0 0.5px rgba(255,255,255,0.06);
     --shadow-2: 0 8px 20px -8px rgba(0,0,0,0.5), 0 0 0 0.5px rgba(255,255,255,0.07);

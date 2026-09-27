@@ -72,7 +72,17 @@ export function FirstRun({ snap }: { snap: AppSnapshot }) {
               <span className="det__ok">{t.found && t.used && <IconCheck size={10} />}</span>
               <Glyph tool={t.tool} />
               <span className="det__name">{TOOL_NAMES[t.tool]}</span>
-              <span className="det__path">{!t.found ? "not found" : t.days ? `${t.path} · ${plural(t.days, "day")}` : "found · no usage yet"}</span>
+              <span className="det__meta">
+                {!t.found ? (
+                  "Not installed"
+                ) : t.days ? (
+                  <>
+                    <span className="det__path">{t.path}</span> · {plural(t.days, "day")}
+                  </>
+                ) : (
+                  "Found, no usage yet"
+                )}
+              </span>
             </div>
           ))}
         </div>
