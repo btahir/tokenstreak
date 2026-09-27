@@ -152,6 +152,48 @@ fn defs() -> Vec<Def> {
             today_cap: None,
             acknowledge: true,
         },
+        // Appended (not inserted) so the seeds of the presets above stay stable.
+        Def {
+            id: "long-history",
+            title: "Long history",
+            description: "Three and a half years of use: many past runs, holidays and a 64-day streak.",
+            days: 1280,
+            goal: 10_000_000,
+            tools: [0.6, 0.3, 0.1],
+            now_hour: 18,
+            target: |r, off, g| match off {
+                0..=63 => busy(r, g, 1.02, 2.6),
+                64 => 0,
+                // two long past runs that stay in the sky as afterglow
+                180..=221 | 560..=617 => busy(r, g, 1.05, 2.3),
+                // a week or two away roughly twice a year
+                _ if off % 181 < 8 => 0,
+                // the first year was lighter and patchier
+                _ if off > 900 => if r.chance(0.4) { 0 } else { busy(r, g, 0.15, 1.3) },
+                _ => if r.chance(0.09) { 0 } else { busy(r, g, 0.45, 2.4) },
+            },
+            onboarded: true,
+            today_cap: None,
+            acknowledge: true,
+        },
+        Def {
+            id: "sparse",
+            title: "Sparse week",
+            description: "Five days of history just after onboarding: a 3-day streak and one quiet day.",
+            days: 5,
+            goal: 2_000_000,
+            tools: [0.75, 0.25, 0.0],
+            now_hour: 14,
+            target: |r, off, g| match off {
+                0 => busy(r, g, 0.55, 0.65),
+                1..=3 => busy(r, g, 1.05, 1.7),
+                4 => busy(r, g, 0.35, 0.5),
+                _ => busy(r, g, 1.1, 1.4),
+            },
+            onboarded: true,
+            today_cap: None,
+            acknowledge: true,
+        },
     ]
 }
 

@@ -5,5 +5,7 @@ export const PRESET_IDS = [
   "heavy-multi-tool",
   "goal-hit",
   "streak-at-risk",
+  "long-history",
+  "sparse",
 ] as const;
 export type PresetId = (typeof PRESET_IDS)[number];

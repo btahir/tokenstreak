@@ -28,5 +28,15 @@
     "description": "9 p.m., a 9-day streak and only 30% of today's goal.",
     "id": "streak-at-risk",
     "title": "Streak at risk"
+  },
+  {
+    "description": "Three and a half years of use: many past runs, holidays and a 64-day streak.",
+    "id": "long-history",
+    "title": "Long history"
+  },
+  {
+    "description": "Five days of history just after onboarding: a 3-day streak and one quiet day.",
+    "id": "sparse",
+    "title": "Sparse week"
   }
 ]
