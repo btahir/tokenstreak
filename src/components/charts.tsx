@@ -6,7 +6,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Tool } from "../api/types";
 import type { BarRow, HeatCell } from "../lib/derive";
-import { formatDayYear, formatTokens, formatUsd, monthShort, TOOL_SHORT, TOOLS } from "../lib/format";
+import { formatDate, formatTokens, formatUsd, monthShort, TOOL_SHORT, TOOLS } from "../lib/format";
 
 const COL: Record<Tool, string> = { claude: "var(--tool-claude)", codex: "var(--tool-codex)", gemini: "var(--tool-gemini)" };
 
@@ -221,7 +221,7 @@ export function AreaChart({ points, height = 160, color = "var(--accent)", forma
       </svg>
       {hp && hover !== null && (
         <Tip x={(X(hover) / W) * (wrap.current?.clientWidth ?? W)} y={Y(hp.value)}>
-          <div className="tip__h">{hp.key.length === 10 ? formatDayYear(hp.key) : hp.key}</div>
+          <div className="tip__h">{hp.key.length === 10 ? formatDate(hp.key) : hp.key}</div>
           <b className="tip__num">{format(hp.value)}</b>
         </Tip>
       )}
@@ -305,7 +305,7 @@ export function Heatmap({ columns, gap = 3, minCell = 10, maxCell = 17 }: { colu
       </div>
       {hover && (
         <Tip x={hover.x} y={hover.y} align={hover.x < 80 ? "left" : hover.x > width - 80 ? "right" : "center"}>
-          <div className="tip__h">{formatDayYear(hover.c.date)}</div>
+          <div className="tip__h">{formatDate(hover.c.date)}</div>
           <b className="tip__num">{hover.c.total ? formatTokens(hover.c.total) : "No tokens"}</b>
           <div className="tip__foot">{hover.c.met ? "Goal lit" : hover.c.frozen ? (hover.c.freeze ? "Streak freeze · streak kept" : "Rest day") : hover.c.total ? "Under goal" : hover.c.today ? "Today" : "Day off"}</div>
         </Tip>

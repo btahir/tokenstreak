@@ -6,7 +6,7 @@ import { isTauri } from "../../api";
 import { IconBars, IconGear, IconHeart, IconMedal, IconTrail, Wordmark } from "../../components/icons";
 import { Progress } from "../../components/ui";
 import { SUPPORT_URL } from "../../config";
-import { formatTokens } from "../../lib/format";
+import { formatTokens, formatTowardGoal } from "../../lib/format";
 import { useApi, useSnapshot } from "../../state/store";
 import { ROUTES, takeRequestedRoute, type Route } from "../route";
 import { Achievements } from "./Achievements";
@@ -99,7 +99,7 @@ export function Dashboard() {
         <div className="goalbox">
           <div className="eyebrow">This week</div>
           <div className="goalbox__num">
-            <span className="ts-num">{formatTokens(w.tokens)}</span>
+            <span className="ts-num">{formatTowardGoal(w.tokens, w.goal)}</span>
             {w.goal > 0 && <span className="ts-label">of {formatTokens(w.goal)}</span>}
           </div>
           <Progress value={w.progress} lit={w.met} label="This week’s goal" />

@@ -8,6 +8,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { getApi, isTauri } from "../api";
 import { setSoundEnabled, setVolume } from "../lib/sound";
+import { setReferenceDate } from "../lib/format";
 import type { Settings as S } from "../api";
 
 function applySound(s: S): void {
@@ -51,6 +52,7 @@ export function getState(): AppState {
 }
 
 export function setState(patch: Partial<AppState>): void {
+  if (patch.snapshot) setReferenceDate(patch.snapshot.today.date);
   state = { ...state, ...patch };
   subs.forEach((s) => s());
 }

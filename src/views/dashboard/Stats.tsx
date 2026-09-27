@@ -7,7 +7,7 @@ import { AreaChart, MiniBars } from "../../components/charts";
 import { IconDownload, IconLock } from "../../components/icons";
 import { Card, Delta, Glyph, Seg, Tile } from "../../components/ui";
 import { cacheShareOf } from "../../lib/derive";
-import { formatDayYear, formatInt, formatPercent, formatTimes, formatTokens, formatUsd, plural, TOOL_NAMES } from "../../lib/format";
+import { formatDate, formatInt, formatPercent, formatTimes, formatTokens, formatUsd, plural, TOOL_NAMES } from "../../lib/format";
 import { useApi, useBreakdown } from "../../state/store";
 import { PageHead } from "./PageHead";
 
@@ -30,7 +30,7 @@ export function Stats({ snap }: { snap: AppSnapshot }) {
   return (
     <div className="page" data-testid="page-stats">
       <PageHead
-        eyebrow={b ? `${formatDayYear(b.from)} – ${formatDayYear(b.to)}` : LABEL[range]}
+        eyebrow={b ? `${formatDate(b.from)} – ${formatDate(b.to)}` : LABEL[range]}
         title="Stats"
         actions={
           <>
@@ -178,7 +178,7 @@ function StatsBody({ snap, b }: { snap: AppSnapshot; b: Breakdown }) {
                       </span>
                     </td>
                     <td className="mono">{s.project || "—"}</td>
-                    <td>{formatDayYear(s.startedAt.slice(0, 10))}</td>
+                    <td>{formatDate(s.startedAt.slice(0, 10))}</td>
                     <td>{mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${mins} min`}</td>
                     <td className="mono sessions__model">{s.models[0] ?? "—"}</td>
                     <td className="num">{formatTokens(s.tokens)}</td>
@@ -193,13 +193,13 @@ function StatsBody({ snap, b }: { snap: AppSnapshot; b: Breakdown }) {
         )}
       </Card>
 
-      <Card title="Lifetime" sub={L.firstDate ? `Since ${formatDayYear(L.firstDate)}` : "Everything Tokenstreak has seen"}>
+      <Card title="Lifetime" sub={L.firstDate ? `Since ${formatDate(L.firstDate)}` : "Everything Tokenstreak has seen"}>
         <div className="facts" data-testid="lifetime">
           <Fact label="Tokens" value={formatTokens(L.tokens.total)} />
           <Fact label="Est. cost" value={formatUsd(L.cost, { cents: false })} />
           <Fact label="Active days" value={formatInt(L.activeDays)} />
-          <Fact label="Best day" value={L.bestDay ? formatTokens(L.bestDay.tokens) : "—"} sub={L.bestDay ? formatDayYear(L.bestDay.date) : undefined} />
-          <Fact label="Longest streak" value={`${snap.streak.longest}`} sub={snap.streak.longestStart ? `from ${formatDayYear(snap.streak.longestStart)}` : undefined} />
+          <Fact label="Best day" value={L.bestDay ? formatTokens(L.bestDay.tokens) : "—"} sub={L.bestDay ? formatDate(L.bestDay.date) : undefined} />
+          <Fact label="Longest streak" value={`${snap.streak.longest}`} sub={snap.streak.longestStart ? `from ${formatDate(snap.streak.longestStart)}` : undefined} />
           <Fact label="Sessions" value={formatInt(L.sessions)} />
           <Fact label="Favourite agent" value={L.favoriteTool ? TOOL_NAMES[L.favoriteTool] : "—"} small />
           <Fact label="Favourite model" value={L.favoriteModel ?? "—"} small mono />

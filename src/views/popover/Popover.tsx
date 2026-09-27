@@ -8,7 +8,7 @@ import { IconGear, IconRefresh, IconWindow, Spark, Wordmark } from "../../compon
 import { Chip, Delta, Glyph, Meter, Progress, StreakPill, Tile, useCountUp } from "../../components/ui";
 import { IconArrow } from "../../components/icons";
 import { buildTrailData, celebrationLine, progressCopy, streakMood, todayTiles, trailSummary, weekOrbs } from "../../lib/derive";
-import { formatAgo, formatTokens, formatUsd, splitUnit, TOOL_NAMES, TOOLS } from "../../lib/format";
+import { formatAgo, formatInt, formatTokens, formatTowardGoal, formatUsd, splitUnit, TOOL_NAMES, TOOLS } from "../../lib/format";
 import { playCue } from "../../lib/sound";
 import { useReducedMotion, useResolvedTheme } from "../../lib/theme";
 import { acknowledgeCelebration, getState, useApi, useAppState, useSnapshot } from "../../state/store";
@@ -119,7 +119,7 @@ function PopoverMain({ snap }: { snap: AppSnapshot }) {
   const mood = streakMood(snap);
   const copy = progressCopy(t);
   const heroValue = useCountUp(t.tokens.total, 900);
-  const [heroNum, heroUnit] = splitUnit(formatTokens(heroValue));
+  const [heroNum, heroUnit] = splitUnit(formatTowardGoal(heroValue, t.goal));
   const onDark = theme === "dark";
   const lit = t.met;
 
@@ -197,9 +197,15 @@ function PopoverMain({ snap }: { snap: AppSnapshot }) {
                 {t.goal > 0 && <small>of {formatTokens(t.goal)}</small>}
               </div>
             </div>
-            <StreakPill days={snap.streak.current} tone={mood === "lit" ? "lit" : mood === "risk" ? "risk" : "none"} onDark={onDark}>
-              {mood === "risk" ? "light it tonight" : "day streak"}
-            </StreakPill>
+            {snap.streak.current > 0 ? (
+              <StreakPill days={snap.streak.current} tone={mood === "lit" ? "lit" : mood === "risk" ? "risk" : "none"} onDark={onDark} sub={mood === "risk" ? "light it tonight" : undefined}>
+                day streak
+              </StreakPill>
+            ) : (
+              <StreakPill days={null} tone="none" onDark={onDark} sub={snap.streak.longest > 0 ? `best run ${formatInt(snap.streak.longest)} ${snap.streak.longest === 1 ? "day" : "days"}` : undefined}>
+                {snap.streak.longest > 0 ? "Start a new streak" : "Your trail starts today"}
+              </StreakPill>
+            )}
           </div>
         </div>
       </div>
@@ -274,7 +280,7 @@ function Week({ snap }: { snap: AppSnapshot }) {
         ))}
       </div>
       <div className="week__sum">
-        <b>{formatTokens(w.tokens)}</b>
+        <b>{formatTowardGoal(w.tokens, w.goal)}</b>
         {w.goal > 0 ? `of ${formatTokens(w.goal)} this week` : "this week"}
       </div>
     </div>

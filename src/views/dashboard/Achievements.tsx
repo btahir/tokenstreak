@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Achievement, AchievementCategory, AppSnapshot } from "../../api/types";
 import { Badge, BadgeArt, CATEGORY_LABEL, TIER_CLASS, TIER_LABEL } from "../../components/badges";
 import { Progress, Seg } from "../../components/ui";
-import { formatDayYear, formatInt, formatTokens } from "../../lib/format";
+import { formatDate, formatInt, formatTokens } from "../../lib/format";
 import { useApi } from "../../state/store";
 import { PageHead } from "./PageHead";
 
@@ -12,7 +12,7 @@ type Filter = "all" | AchievementCategory;
 
 export function progressText(a: Achievement): string {
   const left = Math.max(0, a.target - a.progress);
-  if (a.unlockedAt) return `Unlocked ${formatDayYear(a.unlockedAt)}`;
+  if (a.unlockedAt) return `Unlocked ${formatDate(a.unlockedAt)}`;
   if (a.progress <= 0) return a.description;
   if (a.category === "streak" && a.target > 1) return `${formatInt(Math.ceil(left))} ${Math.ceil(left) === 1 ? "day" : "days"} to go`;
   if (a.target >= 1000) return `${formatTokens(a.progress)} of ${formatTokens(a.target)}`;

@@ -93,14 +93,26 @@ export function Ring({ value, size = 64, stroke = 7, label }: { value: number; s
 
 export type StreakTone = "lit" | "risk" | "frozen" | "rest" | "none";
 
-export function StreakPill({ days, tone = "lit", children, onDark }: { days: number; tone?: StreakTone; children?: ReactNode; onDark?: boolean }) {
+/**
+ * The streak pill. `days` null hides the number (no "0-day streak"); `sub`
+ * stacks a small second line under the label ("light it tonight").
+ */
+export function StreakPill({ days, tone = "lit", children, sub, onDark }: { days: number | null; tone?: StreakTone; children?: ReactNode; sub?: ReactNode; onDark?: boolean }) {
+  const label = children ?? "day streak";
   return (
-    <span className={`streak streak--${tone}`} data-testid="streak-pill">
+    <span className={`streak streak--${tone}${sub ? " streak--stack" : ""}`} data-testid="streak-pill">
       <span className="streak__spark">
         <Spark size={14} from={onDark ? "#FFF6EA" : "#FFB27A"} to={onDark ? "#FFD6A8" : "#F0728C"} />
       </span>
-      <b>{days}</b>
-      {children ?? (days === 1 ? "day streak" : "day streak")}
+      {days !== null && <b>{days.toLocaleString("en-US")}</b>}
+      {sub ? (
+        <span className="streak__lines">
+          <span>{label}</span>
+          <small>{sub}</small>
+        </span>
+      ) : (
+        label
+      )}
     </span>
   );
 }

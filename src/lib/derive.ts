@@ -90,7 +90,9 @@ export function buildTrailData(snap: AppSnapshot, opts: TrailBuildOptions = {}):
 export function trailSummary(snap: AppSnapshot): string {
   const pct = Math.round(snap.today.progress * 100);
   const s = snap.streak.current;
-  return `${s}-day streak, today ${pct}% of goal, best ${snap.streak.longest} days`;
+  const best = snap.streak.longest;
+  const lead = s > 0 ? `${s}-day streak` : best > 0 ? `No current streak, best run ${best} days` : "Your trail starts today";
+  return s > 0 ? `${lead}, today ${pct}% of goal, best ${best} days` : `${lead}, today ${pct}% of goal`;
 }
 
 /* ---------------- tiers ---------------- */
@@ -207,7 +209,10 @@ export function todayTiles(snap: AppSnapshot): TodayTiles {
 
 /** "82%", or "15×" once far past the goal. */
 export function progressLabel(progress: number): string {
-  return progress >= 3 ? `${progress >= 10 ? Math.round(progress) : Number(progress.toFixed(1))}×` : `${Math.round(progress * 100)}%`;
+  if (progress >= 3) return `${progress >= 10 ? Math.round(progress).toLocaleString("en-US") : Number(progress.toFixed(1))}×`;
+  const pct = Math.round(progress * 100);
+  // never claim 100% while the goal is unmet
+  return `${progress < 1 && pct >= 100 ? 99 : pct}%`;
 }
 
 export function progressCopy(t: TodayView): { lead: string; rest: string; pct: string } {
@@ -398,6 +403,18 @@ export function goalPresets(suggested: number): GoalPreset[] {
     { key: "steady", label: "Steady", value: s },
     { key: "ambitious", label: "Ambitious", value: friendlyGoal(s * 2) },
   ];
+}
+
+/** How a goal sits against your typical day, for copy that matches the number. */
+export function goalDirection(goal: number, median: number): "below" | "near" | "above" | "none" {
+  if (!(median > 0) || !(goal > 0)) return "none";
+  const r = goal / median;
+  return r < 0.95 ? "below" : r <= 1.05 ? "near" : "above";
+}
+
+/** The weekly goal that goes with a daily goal: six good days. */
+export function weeklyFor(daily: number): number {
+  return friendlyGoal(daily * 6);
 }
 
 /** What your history would look like with `goal` applied to every past day

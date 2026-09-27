@@ -6,8 +6,8 @@ import { isTauri } from "../../api";
 import type { AppSnapshot } from "../../api/types";
 import { IconCheck, IconLock } from "../../components/icons";
 import { Glyph, Progress, Toggle, useCountUp } from "../../components/ui";
-import { baseline, buildTrailData, goalPresets, revealFacts, simulateGoal } from "../../lib/derive";
-import { addDays, formatDay, formatDayYear, formatPercent, formatTokens, plural, splitUnit, TOOL_NAMES } from "../../lib/format";
+import { baseline, buildTrailData, goalDirection, goalPresets, revealFacts, simulateGoal, weeklyFor } from "../../lib/derive";
+import { addDays, daysBetween, formatDate, formatPercent, formatTokens, plural, splitUnit, TOOL_NAMES } from "../../lib/format";
 import { setSoundEnabled } from "../../lib/sound";
 import { useReducedMotion, useResolvedTheme } from "../../lib/theme";
 import { setState, updateSettings, useApi, useAppState, useSettings } from "../../state/store";
@@ -160,7 +160,7 @@ function Reveal({ snap, goal, next }: { snap: AppSnapshot; goal: number; next: (
       <TrailCanvas data={data} theme={theme} variant="full" layout={REVEAL_LAYOUT} revealKey={revealKey} reducedMotion={reduced} ariaLabel={`Your history: ${formatTokens(facts.total)} tokens since ${facts.since ?? "today"}`} />
       <div className="onb__over">
         <div className="eyebrow onb__eye">Here’s your history</div>
-        <h1 className="onb__since">{facts.since ? `Since ${formatDay(facts.since)} your agents have written` : "Today your agents have written"}</h1>
+        <h1 className="onb__since">{facts.since ? `Since ${formatDate(facts.since)} your agents have written` : "Today your agents have written"}</h1>
         <div className="onb__big" data-testid="reveal-total">
           {num}
           {unit}
@@ -169,7 +169,7 @@ function Reveal({ snap, goal, next }: { snap: AppSnapshot; goal: number; next: (
         <div className="facts-row">
           <Fact d={1.4} label="Days you showed up" value={String(facts.daysShowedUp)} />
           <Fact d={1.6} label="Longest run" value={plural(facts.longestRun, "day")} />
-          <Fact d={1.8} label="Busiest day" value={facts.busiest ? `${formatTokens(facts.busiest.total)} · ${formatDay(facts.busiest.date)}` : "—"} />
+          <Fact d={1.8} label="Busiest day" value={facts.busiest ? `${formatTokens(facts.busiest.total)} · ${formatDate(facts.busiest.date)}` : "—"} />
           <Fact d={2.0} label="From cache" value={formatPercent(facts.cacheShare)} />
         </div>
         <div className="onb__cta">
@@ -203,7 +203,11 @@ function Goal({ snap, goal, setGoal, presets, back, done }: { snap: AppSnapshot;
   const [busy, setBusy] = useState(false);
   const sim = useMemo(() => simulateGoal(snap.days, snap.today.date, goal, snap.streak.restDays, snap.streak.freezesEnabled), [snap, goal]);
   const median = baseline(snap.days, snap.today.date).medianTokens;
-  const weeks = 20;
+  // size the preview to the history (at least 8 weeks, at most 20)
+  const firstDay = snap.days.find((d) => d.total > 0)?.date ?? snap.today.date;
+  const weeks = Math.max(8, Math.min(20, Math.ceil((daysBetween(firstDay, snap.today.date) + 1) / 7)));
+  const suggested = presets[1]!.value;
+  const dir = goalDirection(suggested, median);
   const cells = useMemo(() => {
     const start = addDays(snap.today.date, -(weeks * 7 - 1));
     const byDate = new Map(snap.days.map((d) => [d.date, d.total]));
@@ -219,7 +223,7 @@ function Goal({ snap, goal, setGoal, presets, back, done }: { snap: AppSnapshot;
     try {
       await updateSettings({ launchAtLogin: launch, notifications: { goalReached: notify }, sound });
       setSoundEnabled(sound);
-      const next = await api.completeOnboarding({ daily: goal, weekly: goal * 5 });
+      const next = await api.completeOnboarding({ daily: goal, weekly: weeklyFor(goal) });
       setState({ snapshot: next });
       done();
     } finally {
@@ -238,7 +242,12 @@ function Goal({ snap, goal, setGoal, presets, back, done }: { snap: AppSnapshot;
         <p className="onb__p">
           {median > 0 ? (
             <>
-              Your typical day is <b>{formatTokens(median)} tokens</b>. A goal a little above that keeps the streak honest without burning tokens for the sake of it.
+              Your typical day is <b>{formatTokens(median)} tokens</b>.{" "}
+              {dir === "below"
+                ? `The suggested ${formatTokens(suggested)} sits a touch below it, so most days light and the streak stays honest.`
+                : dir === "above"
+                  ? `The suggested ${formatTokens(suggested)} sits a little above it: a stretch, without burning tokens for the sake of it.`
+                  : `The suggested ${formatTokens(suggested)} is right about there, so a normal day lights the trail.`}
             </>
           ) : (
             <>Pick a number that feels like a good day. You can change it any time.</>
@@ -285,7 +294,7 @@ function Goal({ snap, goal, setGoal, presets, back, done }: { snap: AppSnapshot;
           </div>
           <div className="miniheat">
             {cells.map((c) => (
-              <i key={c.date} className={c.cls} title={formatDayYear(c.date)} />
+              <i key={c.date} className={c.cls} title={formatDate(c.date)} />
             ))}
           </div>
           <div className="preview__facts">
@@ -294,7 +303,7 @@ function Goal({ snap, goal, setGoal, presets, back, done }: { snap: AppSnapshot;
               <div className="ts-num">{sim.lit}</div>
             </div>
             <div>
-              <div className="ts-label">Streak today</div>
+              <div className="ts-label">Current streak</div>
               <div className="ts-num">{sim.current}</div>
             </div>
             <div>

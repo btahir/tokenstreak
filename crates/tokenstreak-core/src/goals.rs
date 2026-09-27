@@ -255,25 +255,25 @@ pub fn suggest(totals: &BTreeMap<Date, u64>, today: Date) -> (u64, u64) {
     }
     v.sort_unstable();
     let median = v[v.len() / 2];
-    let daily = friendly_round((median as f64 * 0.8) as u64).max(10_000);
-    (daily, friendly_round(daily * 5))
+    // A touch below the typical day, so most days light; the weekly goal is
+    // six good days, so a quiet day is forgiven but the week still means something.
+    let daily = friendly_round((median as f64 * 0.9) as u64).max(10_000);
+    (daily, friendly_round(daily * 6))
 }
 
-/// Rounds to 1, 2 or 5 × 10^n (at or below the value).
+/// Friendly goal steps: 1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6 or 8 × 10^n.
+const STEPS_X10: [u64; 10] = [10, 12, 15, 20, 25, 30, 40, 50, 60, 80];
+
+/// Rounds down to the nearest friendly step (at most about 20% below the value).
 pub fn friendly_round(v: u64) -> u64 {
     if v < 10 {
         return v.max(1);
     }
     let mag = 10u64.pow((v as f64).log10().floor() as u32);
-    let lead = v / mag;
-    let step = if lead >= 5 {
-        5
-    } else if lead >= 2 {
-        2
-    } else {
-        1
-    };
-    step * mag
+    // compare in tenths of the magnitude so 1.5, 2.5 etc. work for any size
+    let lead_x10 = (v as u128 * 10 / mag as u128) as u64;
+    let step = STEPS_X10.iter().rev().copied().find(|s| *s <= lead_x10).unwrap_or(10);
+    (step as u128 * mag as u128 / 10) as u64
 }
 
 pub fn is_weekend(d: Date) -> bool {
@@ -447,8 +447,14 @@ mod tests {
 
     #[test]
     fn friendly() {
-        assert_eq!(friendly_round(4_321_000), 2_000_000);
-        assert_eq!(friendly_round(7_900_000), 5_000_000);
-        assert_eq!(friendly_round(1_500), 1_000);
+        assert_eq!(friendly_round(4_321_000), 4_000_000);
+        assert_eq!(friendly_round(7_900_000), 6_000_000);
+        assert_eq!(friendly_round(1_500), 1_500);
+        assert_eq!(friendly_round(32_040_000), 30_000_000);
+        assert_eq!(friendly_round(2_880_000), 2_500_000);
+        for v in [12_345u64, 99_999, 1_999_999, 35_600_000, 812_000_000] {
+            let r = friendly_round(v);
+            assert!(r <= v && r as f64 >= v as f64 * 0.74, "{v} -> {r}");
+        }
     }
 }

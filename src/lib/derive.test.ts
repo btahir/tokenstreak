@@ -167,7 +167,7 @@ describe("heatmap", () => {
 describe("goals", () => {
   it("offers gentle, steady and ambitious presets around the suggestion", () => {
     const p = goalPresets(480_000);
-    expect(p.map((x) => x.value)).toEqual([200_000, 500_000, 1_000_000]);
+    expect(p.map((x) => x.value)).toEqual([250_000, 500_000, 1_000_000]);
   });
   it("simulates a goal over history, with today never breaking the run", () => {
     const days = [row("2026-09-20", 150), row("2026-09-21", 150), row("2026-09-22", 10), row("2026-09-23", 150), row("2026-09-24", 150), row("2026-09-25", 150), row("2026-09-26", 20)];

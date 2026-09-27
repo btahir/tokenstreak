@@ -20,7 +20,7 @@ import {
   trailSummary,
   windowSums,
 } from "../../lib/derive";
-import { formatDayYear, formatLongDate, formatMonthDay, formatPercent, formatTokens, formatUsd, parseDate, TOOL_NAMES, TOOL_SHORT } from "../../lib/format";
+import { formatDate, formatInt, formatLongDate, formatPercent, formatTokens, formatTowardGoal, formatUsd, parseDate, TOOL_NAMES, TOOL_SHORT } from "../../lib/format";
 import { useReducedMotion, useResolvedTheme } from "../../lib/theme";
 import { useAppState, useBreakdown } from "../../state/store";
 import { TrailCanvas } from "../../trail/TrailCanvas";
@@ -83,6 +83,7 @@ function Hero({ snap, maxDays }: { snap: AppSnapshot; maxDays: number }) {
   const data = useMemo(() => buildTrailData(snap, { maxDays }), [snap, maxDays]);
   const t = snap.today;
   const tier = tierInfo(snap.streak.current);
+  const afterglow = snap.streak.current === 0 && snap.streak.longest > 0 ? tierInfo(snap.streak.longest) : null;
   const [celebrateKey, setCelebrateKey] = useState(0);
   const [lastCeleb, setLastCeleb] = useState<string | null>(null);
   if (celebration && celebration.date !== lastCeleb) {
@@ -107,19 +108,21 @@ function Hero({ snap, maxDays }: { snap: AppSnapshot; maxDays: number }) {
       <div className="hero__hud">
         <div className="hero__lab">{t.met ? "Goal lit today" : "Today’s light"}</div>
         <div className="hero__num">
-          {formatTokens(t.tokens.total)}
+          {formatTowardGoal(t.tokens.total, t.goal)}
           {t.goal > 0 && <small>of {formatTokens(t.goal)}</small>}
         </div>
         <div className="hero__row">
           <span className="hpill">
             <Spark size={13} from={theme === "dark" ? "#FFF6EA" : "#FFB27A"} to={theme === "dark" ? "#FFD6A8" : "#F0728C"} />
-            {snap.streak.current}-day streak · best {snap.streak.longest}
+            {streakLine(snap.streak.current, snap.streak.longest)}
           </span>
           {t.goal > 0 && <span className="hpill">{t.met ? `Lit · ${progressLabel(t.progress)}` : `${pct}% · ${formatTokens(t.remaining)} to go`}</span>}
         </div>
       </div>
       <span className="hpill hero__tier" data-testid="tier-chip">
-        {tier.name} tier{tier.next ? ` · ${tier.next} in ${tier.daysToNext} ${tier.daysToNext === 1 ? "day" : "days"}` : " · the brightest"}
+        {afterglow
+          ? `${afterglow.name} afterglow · from your ${formatInt(snap.streak.longest)}-day run`
+          : `${tier.name} tier${tier.next ? ` · ${tier.next} in ${formatInt(tier.daysToNext ?? 0)} ${tier.daysToNext === 1 ? "day" : "days"}` : " · the brightest"}`}
       </span>
       <div className="hero__legend">
         <span>
@@ -141,6 +144,13 @@ function Hero({ snap, maxDays }: { snap: AppSnapshot; maxDays: number }) {
   );
 }
 
+/** "12-day streak · best 30", "30-day streak · your best", "Best run 8 days · start a new one". */
+export function streakLine(current: number, longest: number): string {
+  if (current > 0) return current >= longest ? `${formatInt(current)}-day streak · your best` : `${formatInt(current)}-day streak · best ${formatInt(longest)}`;
+  if (longest > 0) return `Best run ${formatInt(longest)} ${longest === 1 ? "day" : "days"} · start a new one`;
+  return "Your trail starts today";
+}
+
 function HeroTip({ hover }: { hover: TrailHover }) {
   const d = hover.day;
   const goal = d.goal ?? 0;
@@ -153,7 +163,7 @@ function HeroTip({ hover }: { hover: TrailHover }) {
       role="tooltip"
       data-testid="trail-tip"
     >
-      <div className="tip__h">{d.isToday ? "Today" : d.date ? formatDayYear(d.date) : ""}</div>
+      <div className="tip__h">{d.isToday ? "Today" : d.date ? formatDate(d.date) : ""}</div>
       <b className="tip__num">{d.tokens ? formatTokens(d.tokens) : "No tokens"}</b>
       <div className="tip__foot">
         {d.goalMet ? "Goal lit" : d.frozen ? (d.freeze ? "Streak freeze · streak kept" : "Rest day · streak kept") : d.tokens ? (goal ? `${Math.round((d.tokens / goal) * 100)}% of goal` : "Under goal") : d.isToday ? "Just getting started" : "Day off"}
@@ -270,7 +280,7 @@ function UsageChart({ snap }: { snap: AppSnapshot }) {
         height={196}
         goal={goal || null}
         labelEvery={mode === "daily" ? 3 : mode === "weekly" ? 2 : 1}
-        heading={(r) => (mode === "daily" ? (r.isCurrent ? "Today" : formatDayYear(r.key)) : mode === "weekly" ? `Week of ${formatMonthDay(r.key)}` : r.label)}
+        heading={(r) => (mode === "daily" ? (r.isCurrent ? "Today" : formatDate(r.key)) : mode === "weekly" ? `Week of ${formatDate(r.key)}` : r.label)}
         testId="usage-chart"
       />
     </Card>
@@ -392,7 +402,7 @@ function RecentAchievements({ snap, go }: { snap: AppSnapshot; go: (r: Route) =>
     >
       <div className="badges-row" data-testid="recent-achievements">
         {shown.map((a) => (
-          <Badge key={a.id} a={a} size={72} compact meta={formatMonthDay(a.unlockedAt!)} />
+          <Badge key={a.id} a={a} size={72} compact meta={formatDate(a.unlockedAt!)} />
         ))}
         {next && <Badge a={next} size={72} compact meta={progressMeta(next)} />}
         {!shown.length && !next && <div className="note">Your first badge arrives with your first goal day.</div>}

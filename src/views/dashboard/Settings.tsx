@@ -7,7 +7,7 @@ import { IconExternal, IconFolder, IconHeart, IconLock, IconPlay, IconRefresh, L
 import { Card, Chip, Glyph, Seg, Toggle } from "../../components/ui";
 import { REPO_URL, SUPPORT_URL } from "../../config";
 import { baseline, goalPresets } from "../../lib/derive";
-import { formatAgo, formatDayYear, formatInt, formatTokens, friendlyGoal, parseTokens, prettyPath, TOOL_NAMES, TOOLS } from "../../lib/format";
+import { formatAgo, formatDate, formatInt, formatTokens, friendlyGoal, parseTokens, prettyPath, TOOL_NAMES, TOOLS } from "../../lib/format";
 import { getVolume, playCue, setVolume } from "../../lib/sound";
 import { updateSettings, useApi, useSettings } from "../../state/store";
 import { defaultPath } from "../popover/FirstRun";
@@ -438,7 +438,7 @@ function DataCard({ snap, settings, info, set }: { snap: AppSnapshot; settings: 
             desc={
               <span className="path">
                 {path} · {state}
-                {s?.found && s.lastActivity ? ` · last used ${formatDayYear(s.lastActivity.slice(0, 10))}` : ""}
+                {s?.found && s.lastActivity ? ` · last used ${formatDate(s.lastActivity.slice(0, 10))}` : ""}
               </span>
             }
           >
@@ -459,7 +459,7 @@ function DataCard({ snap, settings, info, set }: { snap: AppSnapshot; settings: 
         title="Price list"
         desc={
           <>
-            {p.source} ({p.license}), {formatInt(p.modelCount)} models, updated {formatDayYear(p.updatedAt.slice(0, 10))}. Costs are estimates.
+            {p.source} ({p.license}), {formatInt(p.modelCount)} models, updated {formatDate(p.updatedAt.slice(0, 10))}. Costs are estimates.
             {p.unpricedModels.length > 0 && <> Unpriced (counted as $0): {p.unpricedModels.slice(0, 3).join(", ")}{p.unpricedModels.length > 3 ? "…" : ""}.</>}
             {prices === "err" && <span className="srow__err"> Couldn’t refresh{err ? `: ${err}` : ""}.</span>}
           </>

@@ -118,7 +118,7 @@ fn weekly_goal_and_suggestions() {
     assert!(r.weeks[0].3 && r.weeks[1].3);
     assert_eq!(r.weekly_current, 2);
     let (d, w) = goals::suggest(&totals, "2026-09-23".parse().unwrap());
-    assert!(d >= 10_000 && w == d * 5);
+    assert!(d >= 10_000 && w == goals::friendly_round(d * 6));
 }
 
 #[test]
