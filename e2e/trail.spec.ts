@@ -199,3 +199,111 @@ test("goal moment: ignition, then the streak digit rolls, then the toast", async
   await expect(page.locator(".ts-roll-old")).toHaveCount(0);
   expect(Number((await page.getByTestId("streak-pill").locator("b").textContent())!.trim())).toBe(Number(before) + 1);
 });
+
+/* ---- round 3: light-theme history reads as light, in both engines ---- */
+
+/** In-page CIELAB profiles through goal-day history (see scripts/measure-trail-light.mjs). */
+async function lightProfile(page: Page) {
+  return page.evaluate(() => {
+    const canvas = document.querySelector<HTMLCanvasElement>('[data-testid="trail-full"]')!;
+    const t = (window as unknown as { __trails: { canvas: HTMLCanvasElement; geometry: () => { points: { x: number; y: number; wd: number; role: string; hw: number; gw: number }[] } }[] }).__trails.find((x) => x.canvas === canvas)!;
+    const pts = t.geometry().points;
+    const dpr = canvas.width / canvas.clientWidth;
+    const ctx = canvas.getContext("2d")!;
+    const lin = (c: number) => ((c /= 255) <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+    const Ls = (r: number, g: number, b: number) => {
+      const Y = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+      return Y > 0.008856 ? 116 * Math.cbrt(Y) - 16 : 903.3 * Y;
+    };
+    const rows: { peak: number; plateau: number; falloff: number }[] = [];
+    pts.forEach((p, i) => {
+      if (p.role === "gap" || p.hw < 0.95 || p.gw < 0.95 || p.wd < 5 || !pts[i - 1] || !pts[i + 1] || pts[i - 1]!.role === "gap" || pts[i + 1]!.role === "gap") return;
+      const hgt = Math.round(80 * dpr);
+      const d = ctx.getImageData(Math.round(p.x * dpr), Math.round((p.y - 40) * dpr), 1, hgt).data;
+      const raw: number[] = [];
+      for (let q = 0; q < hgt; q++) raw.push(Ls(d[q * 4]!, d[q * 4 + 1]!, d[q * 4 + 2]!));
+      const L = raw.map((v, q) => (raw[Math.max(0, q - 1)]! + v + raw[Math.min(raw.length - 1, q + 1)]!) / 3);
+      let pk = 0;
+      for (let q = 1; q < L.length; q++) if (L[q]! > L[pk]!) pk = q;
+      let a = pk;
+      let b = pk;
+      while (a > 0 && L[a - 1]! >= L[pk]! - 0.5) a--;
+      while (b < L.length - 1 && L[b + 1]! >= L[pk]! - 0.5) b++;
+      const side = (dir: number) => {
+        const reach = Math.round(p.wd * 0.78 * dpr);
+        let v = pk;
+        for (let q = pk; Math.abs(q - pk) <= reach && q >= 0 && q < L.length; q += dir) if (L[q]! < L[v]!) v = q;
+        const span = L[Math.max(0, Math.min(L.length - 1, pk + dir * reach))]! - L[v]!;
+        if (span < 1) return 0;
+        const cross = (f: number) => {
+          const th = L[v]! + f * span;
+          let j = v;
+          while (j + dir >= 0 && j + dir < L.length && L[j + dir]! < th) j += dir;
+          const x0 = L[j]!;
+          const x1 = L[j + dir] ?? x0;
+          return j + dir * (x1 === x0 ? 0 : (th - x0) / (x1 - x0));
+        };
+        return Math.abs(cross(0.9) - cross(0.1)) / dpr;
+      };
+      rows.push({ peak: L[pk]!, plateau: (b - a + 1) / dpr, falloff: Math.min(side(-1), side(1)) });
+    });
+    const med = (xs: number[]) => [...xs].sort((x, y) => x - y)[Math.floor(xs.length / 2)]!;
+    return { n: rows.length, peak: med(rows.map((r) => r.peak)), plateau: med(rows.map((r) => r.plateau)), falloff: med(rows.map((r) => r.falloff)) };
+  });
+}
+
+test.describe("light history is light, not paint", () => {
+  test.use({ deviceScaleFactor: 2, colorScheme: "light" });
+  test("goal days peak above the sky with a soft edge (L* >= 95, plateau <= 2 px, falloff >= 3 px)", async ({ page }) => {
+    await page.setViewportSize({ width: 1180, height: 800 });
+    await page.goto(url({ view: "dashboard", preset: "first-run-reveal", step: "3", theme: "light" }));
+    await page.getByTestId("onb-start").click();
+    await page.getByTestId("hero").waitFor();
+    await page.waitForTimeout(1200);
+    const p = await lightProfile(page);
+    expect(p.n).toBeGreaterThan(2);
+    expect(p.peak).toBeGreaterThanOrEqual(95);
+    expect(p.plateau).toBeLessThanOrEqual(2);
+    expect(p.falloff).toBeGreaterThanOrEqual(3);
+  });
+});
+
+test.describe("the ribbon body is soft in every engine", () => {
+  test.use({ deviceScaleFactor: 2, colorScheme: "dark" });
+  test("WebKit and Chromium both soften history edges (no reliance on ctx.filter)", async ({ page }) => {
+    await page.setViewportSize({ width: 1180, height: 800 });
+    await page.goto(url({ view: "dashboard", preset: "first-run-reveal", step: "3", theme: "dark" }));
+    await page.getByTestId("onb-start").click();
+    await page.getByTestId("hero").waitFor();
+    await page.waitForTimeout(1200);
+    // the 10-90% width of each history edge's brightness step, in CSS px (a crisp edge is ~0.5)
+    const edge = await page.evaluate(() => {
+      const canvas = document.querySelector<HTMLCanvasElement>('[data-testid="trail-full"]')!;
+      const t = (window as unknown as { __trails: { canvas: HTMLCanvasElement; geometry: () => { points: { x: number; y: number; wd: number; role: string; hw: number }[] } }[] }).__trails.find((x) => x.canvas === canvas)!;
+      const pts = t.geometry().points.filter((p, i, a) => p.role !== "gap" && p.hw > 0.95 && p.wd > 6 && a[i - 1]?.role !== "gap" && a[i + 1]?.role !== "gap");
+      const dpr = canvas.width / canvas.clientWidth;
+      const ctx = canvas.getContext("2d")!;
+      const widths: number[] = [];
+      for (const p of pts) {
+        const hgt = Math.round(p.wd * 2 * dpr);
+        const d = ctx.getImageData(Math.round(p.x * dpr), Math.round((p.y - p.wd) * dpr), 1, hgt).data;
+        const v: number[] = [];
+        for (let q = 0; q < hgt; q++) v.push(d[q * 4]! + d[q * 4 + 1]! + d[q * 4 + 2]!);
+        const mid = Math.round(hgt / 2);
+        const hi = Math.max(...v.slice(mid - 2, mid + 3));
+        const lo = v[hgt - 1]!;
+        if (hi - lo < 30) continue;
+        const at = (f: number) => {
+          let j = mid;
+          while (j < hgt - 1 && v[j]! > lo + f * (hi - lo)) j++;
+          return j;
+        };
+        widths.push((at(0.1) - at(0.9)) / dpr);
+      }
+      widths.sort((a, b) => a - b);
+      return { n: widths.length, median: widths[Math.floor(widths.length / 2)] ?? 0 };
+    });
+    expect(edge.n).toBeGreaterThan(2);
+    expect(edge.median).toBeGreaterThanOrEqual(1.5);
+  });
+});

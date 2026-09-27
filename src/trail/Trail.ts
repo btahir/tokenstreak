@@ -267,12 +267,20 @@ interface Pt {
   cache: number;
   role: Role;
   b: Bucket;
+  /** History weight: 1 = history, 0 = the current run (crossfades over a few days). */
+  hw: number;
+  /** Goal weight for history's lit core: 1 goal day, 0.35 other days with tokens, 0 none. */
+  gw: number;
 }
 interface Sample {
   x: number;
   y: number;
   wd: number;
   a: number;
+  /** History weight (see Pt.hw), goal weight (Pt.gw), end fade 0..1 at breaks. */
+  hw: number;
+  gw: number;
+  ef: number;
   cool: number;
   u: number;
   col: RGB;
@@ -291,6 +299,8 @@ interface Piece {
   s1: number;
   /** Ends at today's head (its last segment is drawn live). */
   head: boolean;
+  /** A 1-2 day stretch between breaks: drawn as a point of light, not a band. */
+  spark?: boolean;
 }
 interface Particle {
   x: number;
@@ -405,7 +415,6 @@ export class Trail {
   private cacheEnd = -1;
   /** Today's fraction of the goal baked into the cached ribbon. */
   private bakedProgress = 0;
-  private sparks: Pt[] = [];
   private embers: Ember[] = [];
   private head = { x: 0, y: 0 };
   private milestones: Milestone[] = [];
@@ -607,10 +616,10 @@ export class Trail {
   }
 
   /** Debug/test view of the laid-out geometry (CSS px). */
-  geometry(): { head: { x: number; y: number }; points: { x: number; y: number; wd: number; role: Role }[]; labels: { m: number; visible: boolean; x: number; y: number }[]; lod: number } {
+  geometry(): { head: { x: number; y: number }; points: { x: number; y: number; wd: number; role: Role; hw: number; gw: number }[]; labels: { m: number; visible: boolean; x: number; y: number }[]; lod: number } {
     return {
       head: { ...this.head },
-      points: this.pts.map((p) => ({ x: p.x, y: p.y, wd: p.wd, role: p.role })),
+      points: this.pts.map((p) => ({ x: p.x, y: p.y, wd: p.wd, role: p.role, hw: p.hw, gw: p.gw })),
       labels: this.milestones.map((m) => ({ m: m.m, ...m.label })),
       lod: this.lod,
     };
@@ -886,7 +895,6 @@ export class Trail {
     // as wide as its share of the goal (never thinner than 2.5 px); lit days glow brighter.
     const wMin = v.wMin * k;
     const wMax = v.wMax * k;
-    const floor = Math.max(1.5, wMin * 0.9);
     const shape = (r: number) => 0.78 * Math.pow(Math.min(r, 1), 0.8) + 0.22 * clamp((r - 1) / 1.5, 0, 1);
     const ribbonW = (r: number) => wMin + (wMax - wMin) * shape(r);
     const body = ribbonW(1);
@@ -896,7 +904,8 @@ export class Trail {
       const role = roles[i]!;
       if (role === "gap") return 0;
       if (role === "bridge") return Math.max(2.5, body * 0.45);
-      if (all) return b.tokens > 0 || role === "today" ? ribbonW(Math.max(b.ratio, 0.7)) : floor;
+      // a quiet day in a short card narrows the arc gently (a hard pinch read as a crease)
+      if (all) return b.tokens > 0 || role === "today" ? ribbonW(Math.max(b.ratio, 0.7)) : ribbonW(0.7) * 0.6;
       // a bridged (sub-pixel) gap narrows, but never below 40% of the body
       if (b.tokens <= 0 && role !== "today") return Math.max(2.5, body * 0.45);
       return b.ratio >= 1 ? ribbonW(b.ratio) : role === "today" ? ribbonW(b.ratio) : subW(b.ratio);
@@ -905,7 +914,7 @@ export class Trail {
     const todayOnRun = B[m - 1]!.ratio >= 1 || prevRole === "current" || prevRole === "bridge";
     const al = B.map((b, i) => {
       const role = roles[i]!;
-      if (all && role !== "gap" && role !== "bridge") return b.tokens > 0 || role === "today" ? 1 : 0.5;
+      if (all && role !== "gap" && role !== "bridge") return b.tokens > 0 || role === "today" ? 1 : 0.7;
       if (role === "today") return todayOnRun ? 1 : T.histA[1] + (1 - T.histA[1]) * Math.min(b.ratio, 1);
       if (role === "current") return 1;
       if (role === "gap") return 0;
@@ -920,7 +929,7 @@ export class Trail {
     const u = roles.map(() => 0.45);
     for (const r of runs) {
       const end = r.current ? m - 1 : r.b;
-      if (r.current) for (let q = r.a; q <= end; q++) u[q] = end > r.a ? 0.45 + (0.55 * (q - r.a)) / (end - r.a) : 1;
+      for (let q = r.a; q <= end; q++) u[q] = end > r.a ? 0.45 + (0.55 * (q - r.a)) / (end - r.a) : 1;
     }
     if (all) for (let q = 0; q < m; q++) u[q] = m > 1 ? q / (m - 1) : 1;
     u[m - 1] = 1;
@@ -944,6 +953,12 @@ export class Trail {
       mask,
     );
     const wdS = wd.map((_, i) => (all ? curW[i]! : lerp(pastW[i]!, curW[i]!, isCur[i] ? Math.max(0.5, blend[i]!) : blend[i]!)));
+    const histW = wd.map((_, i) => (all ? 0 : 1 - (isCur[i] ? Math.max(0.5, blend[i]!) : blend[i]!)));
+    const goalW = gaussian(
+      B.map((b, i) => (roles[i] === "gap" ? 0 : b.tokens <= 0 && roles[i] !== "today" ? 0 : b.ratio >= 1 || roles[i] === "past" ? 1 : 0.35)),
+      0.8,
+      mask,
+    );
     const alS = gaussian(al, sigA, mask);
     const coolS = gaussian(cool, sigA, mask);
     // today follows progress; keep its raw values
@@ -971,7 +986,7 @@ export class Trail {
       const role = roles[i]!;
       const tools: ToolShares = { claude: mix[0]![i]!, codex: mix[1]![i]!, gemini: mix[2]![i]! };
       const col: RGB = [ch[0]![i]!, ch[1]![i]!, ch[2]![i]!];
-      return { x: px[i]!, y: ys[i]!, wd: wdS[i]!, a: alS[i]!, cool: coolS[i]!, u: u[i]!, col, tools, cache: cacheS[i]!, role, b };
+      return { x: px[i]!, y: ys[i]!, wd: wdS[i]!, a: alS[i]!, cool: coolS[i]!, u: u[i]!, col, tools, cache: cacheS[i]!, role, b, hw: histW[i]!, gw: goalW[i]! };
     });
     this.pts = pts;
     this.head = { x: pts[m - 1]!.x, y: pts[m - 1]!.y };
@@ -998,8 +1013,7 @@ export class Trail {
     };
     const hole = Math.max(2.5, 0.22 * step);
     const ext = clamp(0.5 * step - hole, 0, 0.5 * step);
-    const endLen = clamp(0.3 * step, 3, 6);
-    let i = 0;
+        let i = 0;
     while (i < m) {
       if (roles[i] === "gap") {
         i++;
@@ -1030,6 +1044,9 @@ export class Trail {
           seg: a,
           wd: lerp(p1.wd, p2.wd, t),
           a: lerp(p1.a, p2.a, t),
+          hw: lerp(p1.hw, p2.hw, t),
+          gw: lerp(p1.gw, p2.gw, t),
+          ef: 1,
           cool: lerp(p1.cool, p2.cool, t),
           u: lerp(p1.u, p2.u, t),
           col: mixRGB(p1.col, p2.col, t),
@@ -1039,13 +1056,20 @@ export class Trail {
           ny: 0,
         });
       }
-      const piece: Piece = { p0: i, p1: j, s0, s1: samples.length - 1, head: isHead };
+      const piece: Piece = { p0: i, p1: j, s0, s1: samples.length - 1, head: isHead, spark: !isHead && !all && j - i <= 1 };
       pieces.push(piece);
+      // ends fade like light flickering off (no caps): over min(10 px, 35% of the stretch)
+      // the width tapers to 55% and the alpha to 0
+      const fadeLen = Math.max(2, Math.min(10, 0.35 * (xb - xa)));
       for (let q = s0; q <= piece.s1; q++) {
         const s = samples[q]!;
-        const atStart = i === 0 && pts[0]!.x <= x0 + 1 ? 1 : smoothstep(0, endLen, s.x - xa);
-        const atEnd = isHead ? 1 : smoothstep(0, endLen, xb - s.x);
-        s.wd *= 0.78 + 0.22 * Math.min(atStart, atEnd);
+        // only a path that starts at the canvas edge begins at full strength; one that starts
+        // inside (short cards) tapers in like any other stretch
+        const atStart = i === 0 && pts[0]!.x <= 2 ? 1 : smoothstep(0, i === 0 ? Math.max(fadeLen, 0.22 * (xb - xa)) : fadeLen, s.x - xa);
+        const atEnd = isHead ? 1 : smoothstep(0, fadeLen, xb - s.x);
+        const f = Math.min(atStart, atEnd);
+        s.wd *= 0.55 + 0.45 * f;
+        s.ef = f;
         // the path's very first day fades in from the left edge
         if (i === 0 && q - s0 < 12) s.a *= 0.45 + 0.55 * ((q - s0) / 12);
         // the body narrows into the head orb, so a big day never ends in a flat cap
@@ -1072,7 +1096,6 @@ export class Trail {
       }
     this.samples = samples;
     this.pieces = pieces;
-    this.sparks = [];
     const hp = pieces.find((p) => p.head);
     this.cacheEnd = hp ? hp.s1 : -1;
 
@@ -1206,15 +1229,9 @@ export class Trail {
     }
   }
 
-  /** Spans of samples drawn into the cache (today's live segment excluded). */
-  private spans(): { s0: number; s1: number; cap: boolean }[] {
-    return this.pieces.map((p) => ({ s0: p.s0, s1: p.head ? this.cacheEnd : p.s1, cap: !p.head })).filter((s) => s.s1 - s.s0 >= 1);
-  }
-
-  /** Round start caps, except where the path begins at the canvas edge. */
-  private capStart(s0: number): boolean {
-    const s = this.samples[s0];
-    return !!s && s.x > 2;
+  /** Spans of samples drawn as bands (1-2 day sparks are drawn as points of light). */
+  private spans(): { s0: number; s1: number }[] {
+    return this.pieces.filter((p) => !p.spark).map((p) => ({ s0: p.s0, s1: p.head ? this.cacheEnd : p.s1 })).filter((s) => s.s1 - s.s0 >= 1);
   }
 
   private paintRibbon(): void {
@@ -1234,8 +1251,8 @@ export class Trail {
     g.setTransform(q, 0, 0, q, 0, 0);
     g.clearRect(0, 0, this.w, this.h);
     g.globalCompositeOperation = T.blend;
-    for (const s of spans) this.band(g, s.s0, s.s1, "glow", undefined, s.cap);
-    for (const p of this.sparks) this.sparkDot(g, p, 3.2);
+    for (const s of spans) this.band(g, s.s0, s.s1, "glow");
+    for (const pc of this.pieces) if (pc.spark) this.paintSpark(g, pc, true);
     // Blur by compositing with an identity transform: filter radii then mean
     // device pixels in every engine (WebKit scales them by the transform).
     c.drawImage(this.blurInto(this.blurCache, gc, 8 * k * q), 0, 0, this.w, this.h);
@@ -1247,26 +1264,10 @@ export class Trail {
       const sx = sc.getContext("2d")!;
       sx.setTransform(q2, 0, 0, q2, 0, 3.4 * k * q2);
       sx.clearRect(0, -10, this.w, this.h + 10);
-      for (const s of spans) this.band(sx, s.s0, s.s1, "shadow", undefined, s.cap);
+      for (const s of spans) this.band(sx, s.s0, s.s1, "shadow");
       c.save();
       c.globalCompositeOperation = "source-over";
       c.drawImage(this.blurInto(this.blurCache, sc, 4 * k * q2), 0, 0, this.w, this.h);
-      c.restore();
-    }
-    // compressed axis: a faint scale-break mark where older history is squeezed
-    if (this.axis.split > 0) {
-      const xb = this.axis.xSplit;
-      const yb = this.yAt(xb);
-      c.save();
-      c.globalCompositeOperation = "source-over";
-      c.strokeStyle = this.theme.halo;
-      c.lineWidth = 1;
-      for (const off of [-2.5, 2.5]) {
-        c.beginPath();
-        c.moveTo(xb + off - 2, yb + 14 * k);
-        c.lineTo(xb + off + 2, yb + 22 * k);
-        c.stroke();
-      }
       c.restore();
     }
     // bodies: all pieces crisp on one layer, then composite once with a light blur
@@ -1276,14 +1277,53 @@ export class Trail {
     const bctx = bc.getContext("2d")!;
     bctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     bctx.globalCompositeOperation = T.blend;
-    for (const s of spans) this.band(bctx, s.s0, s.s1, "body", undefined, s.cap);
-    for (const p of this.sparks) this.sparkDot(bctx, p, 1);
+    for (const s of spans) this.band(bctx, s.s0, s.s1, "body");
     c.save();
     c.setTransform(1, 0, 0, 1, 0, 0);
-    if (filterBlurWorks() && T.bodyBlur * k * this.dpr >= 1) c.filter = `blur(${(T.bodyBlur * k * this.dpr).toFixed(1)}px)`;
-    c.drawImage(bc, 0, 0);
+    const blurPx = T.bodyBlur * k * this.dpr;
+    if (blurPx >= 1 && filterBlurWorks()) {
+      c.filter = `blur(${blurPx.toFixed(1)}px)`;
+      c.drawImage(bc, 0, 0);
+    } else if (blurPx >= 1) {
+      // WebKit accepts ctx.filter but ignores it: soften by resampling through a smaller
+      // canvas instead (bilinear down and up is about a one-to-two device-pixel blur)
+      const f = clamp(1 / blurPx, 0.35, 0.6);
+      const sc = this.blurCache;
+      sc.width = Math.max(1, Math.round(bc.width * f));
+      sc.height = Math.max(1, Math.round(bc.height * f));
+      const sx = sc.getContext("2d")!;
+      sx.setTransform(1, 0, 0, 1, 0, 0);
+      sx.clearRect(0, 0, sc.width, sc.height);
+      sx.imageSmoothingEnabled = true;
+      sx.imageSmoothingQuality = "high";
+      sx.drawImage(bc, 0, 0, sc.width, sc.height);
+      c.imageSmoothingEnabled = true;
+      c.imageSmoothingQuality = "high";
+      c.drawImage(sc, 0, 0, bc.width, bc.height);
+    } else c.drawImage(bc, 0, 0);
     c.restore();
-    for (const s of spans) this.band(c, s.s0, s.s1, "core", undefined, s.cap);
+    if (this.themeName === "light") this.paintLightHistory(c, spans);
+    for (const s of spans) this.band(c, s.s0, s.s1, "core");
+    for (const pc of this.pieces) if (pc.spark) this.paintSpark(c, pc, false);
+    // compressed axis: a hairline break across the ribbon where older history is squeezed
+    if (this.axis.split > 0) {
+      const xb = this.axis.xSplit;
+      const yb = this.yAt(xb);
+      const sa = this.sampleAtX(xb);
+      const half = (sa ? sa.wd * T.glowMul * 0.5 : 10 * k) + 2;
+      c.save();
+      c.globalCompositeOperation = "destination-out";
+      c.strokeStyle = "rgba(0,0,0,0.85)";
+      c.lineWidth = 1.2;
+      for (const off of [-2.2, 2.2]) {
+        c.beginPath();
+        c.moveTo(xb + off - half * 0.35, yb + half);
+        c.lineTo(xb + off + half * 0.35, yb - half);
+        c.stroke();
+      }
+      c.restore();
+      c.globalCompositeOperation = T.blend;
+    }
     // afterglow strands on past ribbons (static; only the current run's strands are live)
     for (const r of this.runs) {
       if (r.current) continue;
@@ -1332,18 +1372,6 @@ export class Trail {
     return s0 >= 0 && s1 - s0 >= 2 ? { s0, s1 } : null;
   }
 
-  private sparkDot(c: Ctx, p: Pt, mul: number): void {
-    const T = this.theme;
-    const r = Math.max(1.2, p.wd * 0.5) * mul;
-    const g = c.createRadialGradient(p.x, p.y, 0, p.x, p.y, r * 1.6);
-    g.addColorStop(0, rgba(this.themeName === "dark" ? T.core : p.col, p.a * (mul > 1 ? T.glowA : 0.9)));
-    g.addColorStop(1, rgba(p.col, 0));
-    c.fillStyle = g;
-    c.beginPath();
-    c.arc(p.x, p.y, r * 1.6, 0, 7);
-    c.fill();
-  }
-
   /** Draws `src` into `dst` (same pixel size) through a device-pixel blur. */
   private blurInto(dst: HTMLCanvasElement, src: HTMLCanvasElement, px: number): HTMLCanvasElement {
     dst.width = src.width;
@@ -1373,66 +1401,125 @@ export class Trail {
   }
 
   /** One filled band along samples s0..s1 with per-sample width and alpha. */
-  private band(c: Ctx, s0: number, s1: number, mode: "glow" | "body" | "core" | "shadow", arr?: Sample[], cap = false): void {
+  private band(c: Ctx, s0: number, s1: number, mode: "glow" | "body" | "core" | "shadow", arr?: Sample[]): void {
     const T = this.theme;
-    const S = arr ?? this.samples;
-    const mul = mode === "glow" ? T.glowMul : mode === "core" ? T.coreW : mode === "shadow" ? T.bodyMul * 0.92 : T.bodyMul;
-    const minHalf = mode === "core" ? 0.35 : 0;
     const dark = this.themeName === "dark";
+    // light: history is drawn by paintLightHistory; these layers fade out with the history weight
+    const cur = (s: Sample) => (dark ? 1 : 1 - s.hw);
+    const mul = mode === "glow" ? T.glowMul : mode === "core" ? T.coreW : mode === "shadow" ? T.bodyMul * 0.92 : T.bodyMul;
     const alphaOf = (s: Sample) => {
-      // light theme: history keeps a quiet bloom and no drop shadow (a shadow per stretch read as outlines)
-      if (mode === "glow") return T.glowA * Math.pow(s.a, dark ? 1.15 : 2);
-      if (mode === "body") return T.bodyA * s.a;
-      if (mode === "shadow") return 0.16 * clamp((s.a - 0.55) / 0.45, 0, 1);
-      // core: a lit, whiter centre that fades faster than the body on dim days;
-      // on very wide ribbons in dark it is held back so additive light never blows out
-      const damp = dark ? Math.min(1, Math.pow((9 * this.k) / Math.max(1, s.wd), 0.35)) : 1;
-      // history carries no white core (it read as capsules); the core belongs to the current run
-      return T.coreA * Math.pow(clamp((s.a - 0.62) / 0.38, 0, 1), 1.2) * damp;
-    };
-    {
-      const g = c.createLinearGradient(S[s0]!.x, 0, S[s1]!.x, 0);
-      const span = S[s1]!.x - S[s0]!.x || 1;
-      const every = Math.max(1, Math.floor((s1 - s0) / 120));
-      for (let j = s0; j <= s1; j += every) {
-        const s = S[j]!;
-        g.addColorStop(clamp((s.x - S[s0]!.x) / span, 0, 1), rgba(mode === "shadow" ? SHADOW_COL : this.colorFor(s, mode as "glow" | "body" | "core"), alphaOf(s)));
+      if (mode === "glow") {
+        // light history gets a warm bloom that scales with brightness (not its square)
+        // (light history draws its own bloom geometrically in paintLightHistory, for engine parity)
+        return dark ? T.glowA * Math.pow(s.a, 1.15) * s.ef : T.glowA * Math.pow(s.a, 2) * (1 - s.hw) * s.ef;
       }
-      const e = S[s1]!;
-      g.addColorStop(1, rgba(mode === "shadow" ? SHADOW_COL : this.colorFor(e, mode as "glow" | "body" | "core"), alphaOf(e)));
-      c.fillStyle = g;
+      if (mode === "body") return T.bodyA * s.a * cur(s) * s.ef;
+      if (mode === "shadow") return 0.16 * clamp((s.a - 0.55) / 0.45, 0, 1) * cur(s);
+      // core: fades faster than the body on dim days; on very wide ribbons in dark it is held
+      // back so additive light never blows out; it fades out first at a break
+      const damp = dark ? Math.min(1, Math.pow((9 * this.k) / Math.max(1, s.wd), 0.35)) : 1;
+      return T.coreA * Math.pow(clamp((s.a - 0.62) / 0.38, 0, 1), 1.2) * damp * cur(s) * s.ef * s.ef;
+    };
+    const glowMul = (s: Sample) => (mode === "glow" && !dark ? lerp(T.glowMul, 3.2, s.hw) : mul);
+    this.fillBand(
+      c,
+      arr ?? this.samples,
+      s0,
+      s1,
+      (s) => Math.max(mode === "core" ? 0.35 : 0, s.wd * glowMul(s) * 0.5),
+      (s) => (mode === "shadow" ? SHADOW_COL : this.colorFor(s, mode as "glow" | "body" | "core")),
+      alphaOf,
+    );
+  }
+
+  /** Fills the band between offset curves with a horizontal colour/alpha gradient. */
+  private fillBand(c: Ctx, S: Sample[], s0: number, s1: number, half: (s: Sample) => number, col: (s: Sample) => RGB, alpha: (s: Sample) => number): void {
+    if (s1 - s0 < 1) return;
+    const g = c.createLinearGradient(S[s0]!.x, 0, S[s1]!.x, 0);
+    const span = S[s1]!.x - S[s0]!.x || 1;
+    const every = Math.max(1, Math.floor((s1 - s0) / 120));
+    for (let j = s0; j <= s1; j += every) {
+      const s = S[j]!;
+      g.addColorStop(clamp((s.x - S[s0]!.x) / span, 0, 1), rgba(col(s), alpha(s)));
     }
+    const e = S[s1]!;
+    g.addColorStop(1, rgba(col(e), alpha(e)));
+    c.fillStyle = g;
     c.beginPath();
     for (let j = s0; j <= s1; j++) {
       const s = S[j]!;
-      const hw = Math.max(minHalf, s.wd * mul * 0.5);
+      const hw = half(s);
       if (j === s0) c.moveTo(s.x + s.nx * hw, s.y + s.ny * hw);
       else c.lineTo(s.x + s.nx * hw, s.y + s.ny * hw);
     }
-    if (cap) {
-      // round end: the stretch finishes softly
-      const s = S[s1]!;
-      const hw = Math.max(minHalf, s.wd * mul * 0.5);
-      const th = Math.atan2(s.ny, s.nx);
-      c.arc(s.x, s.y, hw, th, th - Math.PI, true);
-    }
     for (let j = s1; j >= s0; j--) {
       const s = S[j]!;
-      const hw = Math.max(minHalf, s.wd * mul * 0.5);
+      const hw = half(s);
       c.lineTo(s.x - s.nx * hw, s.y - s.ny * hw);
     }
-    if (!arr && this.capStart(s0)) {
-      const s = S[s0]!;
-      const hw = Math.max(minHalf, s.wd * mul * 0.5);
-      const th = Math.atan2(-s.ny, -s.nx);
-      c.arc(s.x, s.y, hw, th, th - Math.PI, true);
-    }
     c.closePath();
-    if (mode === "shadow") {
-      c.globalAlpha = 0.9;
+    c.fill();
+  }
+
+  /**
+   * Light theme history: light, not paint. A cross-section falloff (three soft bands
+   * in the run's own warm ramp) under a lit, pre-softened core that is brighter than
+   * the sky on goal days. Pure geometry and gradients: no ctx.filter, so it renders
+   * the same in WebKit and Chromium.
+   */
+  private paintLightHistory(c: Ctx, spans: { s0: number; s1: number }[]): void {
+    const T = this.theme;
+    const coral: RGB = [255, 150, 120];
+    const bodyCol = (s: Sample): RGB => mixRGB(T.ramp ? mixRGB(s.col, mixRGB(T.ramp[0], T.ramp[1], s.u), T.rampAmt) : s.col, coral, 0.5);
+    const coreCol: RGB = [255, 248, 240];
+    c.save();
+    c.globalCompositeOperation = "source-over";
+    const glowCol = (s: Sample): RGB => mixRGB(bodyCol(s), T.glowTint ?? coral, T.glowTintAmt);
+    for (const sp of spans) {
+      // warm bloom: a haze out to 3.2 body widths (glowA * a), in soft steps; no ctx.filter
+      for (const wm of [3.2, 2.6, 2.05, 1.6])
+        this.fillBand(c, this.samples, sp.s0, sp.s1, (s) => s.wd * wm * 0.5, glowCol, (s) => T.glowA * s.a * 0.26 * s.hw * s.ef);
+      // cross-section: wide and faint to narrow and denser, so the edge falls off over several px
+      for (const [wm, am] of [[1.3, 0.06], [1.08, 0.1], [0.86, 0.13], [0.66, 0.16], [0.46, 0.18]] as const)
+        this.fillBand(c, this.samples, sp.s0, sp.s1, (s) => s.wd * T.bodyMul * wm * 0.5, bodyCol, (s) => am * s.hw * s.ef);
+      // the lit core: full on goal days, dimmer on other days; fades out first at a break
+      // (pre-softened in three passes; the innermost stays under the current run's crisp core)
+      for (const [wm, am] of [[0.5, 0.2], [0.3, 0.35], [0.14, 0.8]] as const)
+        this.fillBand(c, this.samples, sp.s0, sp.s1, (s) => Math.max(0.4, s.wd * wm * 0.5), () => coreCol, (s) => am * s.hw * s.gw * s.ef * s.ef);
+    }
+    c.restore();
+  }
+
+  /** A 1-2 day stretch between breaks: a point of light with a warm halo. */
+  private paintSpark(c: Ctx, pc: Piece, glowOnly: boolean): void {
+    const S = this.samples;
+    let top = S[pc.s0]!;
+    for (let q = pc.s0; q <= pc.s1; q++) if (S[q]!.wd > top.wd) top = S[q]!;
+    const mid = S[Math.round((pc.s0 + pc.s1) / 2)]!;
+    const w = Math.max(3, top.wd);
+    const dark = this.themeName === "dark";
+    const T = this.theme;
+    const halo: RGB = dark ? mixRGB(mid.col, T.afterglow, 0.3) : [255, 170, 120];
+    const a = dark ? Math.max(0.5, mid.a) : 0.5 + 0.5 * mid.gw;
+    if (glowOnly) {
+      const g = c.createRadialGradient(mid.x, mid.y, 0, mid.x, mid.y, w * 2.2);
+      g.addColorStop(0, rgba(halo, 0.35 * a));
+      g.addColorStop(1, rgba(halo, 0));
+      c.fillStyle = g;
+      c.beginPath();
+      c.arc(mid.x, mid.y, w * 2.2, 0, 7);
       c.fill();
-      c.globalAlpha = 1;
-    } else c.fill();
+      return;
+    }
+    const g = c.createRadialGradient(mid.x, mid.y, 0, mid.x, mid.y, w * 1.6);
+    g.addColorStop(0, rgba([255, 250, 244], 0.95 * a));
+    g.addColorStop(0.19, rgba([255, 246, 236], 0.85 * a));
+    g.addColorStop(0.45, rgba(halo, 0.45 * a));
+    g.addColorStop(1, rgba(halo, 0));
+    c.fillStyle = g;
+    c.beginPath();
+    c.arc(mid.x, mid.y, w * 1.6, 0, 7);
+    c.fill();
   }
 
   /* ---------------- live layers ---------------- */

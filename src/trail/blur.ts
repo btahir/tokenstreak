@@ -49,7 +49,9 @@ function boxPass(src: Float32Array, dst: Float32Array, w: number, h: number, r: 
 export function softwareBlur(canvas: HTMLCanvasElement, radius: number): void {
   const w = canvas.width;
   const h = canvas.height;
-  const r = Math.max(1, Math.round(radius / 1.7));
+  // three box passes of radius r approximate a Gaussian with sigma ~ r, which is what
+  // CSS blur(px) means, so WebKit's software path matches Chromium's ctx.filter
+  const r = Math.max(1, Math.round(radius));
   if (!w || !h) return;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) return;
