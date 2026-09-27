@@ -27,8 +27,7 @@
   <a href="#install">Install</a> ·
   <a href="#features">Features</a> ·
   <a href="#the-trail">The Trail</a> ·
-  <a href="#privacy">Privacy</a> ·
-  <a href="docs/media/tokenstreak-launch.mp4">Watch the 40-second film</a>
+  <a href="#privacy">Privacy</a>
 </p>
 
 ---
