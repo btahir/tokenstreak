@@ -68,12 +68,12 @@ You run agents all day. They read, write, test and refactor, and at the end of i
 
 **A dashboard worth opening.** The Trail in full, week, month, year or all time. A year-long heatmap, daily, weekly and monthly charts, and breakdowns by agent, model and project.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/media/screens/efficiency-dark.webp">
-  <img src="docs/media/screens/efficiency-light.webp" alt="Daily tokens stacked by agent, an efficiency ring scoring the day against a 30-day baseline, and a year-long heatmap with striped freeze days.">
-</picture>
-
 **Efficiency next to volume.** Cache reuse, estimated cost per day and per million tokens, and tokens per session, each compared with your own 30-day baseline. Costs are estimates from the open [LiteLLM](https://github.com/BerriAI/litellm) price list, bundled with the app and labelled as estimates everywhere.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/media/screens/history-dark.webp">
+  <img src="docs/media/screens/history-light.webp" alt="A year of light: a heatmap of 279 lit days with striped freeze days, above breakdowns by agent, model and project and a shelf of recent achievements.">
+</picture>
 
 **Streaks that forgive.** Every 7 goal days in a row earns a streak freeze, and you can hold two. Miss a day and one is spent automatically, so the streak survives. Rest days you choose neither break nor extend it. A broken run never disappears: it stays in the sky as afterglow.
 
