@@ -136,8 +136,20 @@ export function Toggle({ on, onChange, label, disabled }: { on: boolean; onChang
 
 export function Seg<T extends string | number>({ options, value, onChange, label, size }: { options: { value: T; label: ReactNode; title?: string }[]; value: T | T[]; onChange: (v: T) => void; label: string; size?: "sm" }) {
   const multi = Array.isArray(value);
+  // radio groups: one tab stop, arrow keys move and select (WAI-ARIA radiogroup)
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (multi) return;
+    const dir = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+    if (!dir) return;
+    e.preventDefault();
+    const i = Math.max(0, options.findIndex((o) => o.value === value));
+    const next = (i + dir + options.length) % options.length;
+    onChange(options[next]!.value);
+    const btns = e.currentTarget.querySelectorAll<HTMLButtonElement>("button");
+    btns[next]?.focus();
+  };
   return (
-    <div className={`seg${size ? ` seg--${size}` : ""}`} role={multi ? "group" : "radiogroup"} aria-label={label}>
+    <div className={`seg${size ? ` seg--${size}` : ""}`} role={multi ? "group" : "radiogroup"} aria-label={label} onKeyDown={onKeyDown}>
       {options.map((o) => {
         const on = multi ? (value as T[]).includes(o.value) : value === o.value;
         return (
@@ -148,6 +160,7 @@ export function Seg<T extends string | number>({ options, value, onChange, label
             role={multi ? undefined : "radio"}
             aria-checked={multi ? undefined : on}
             aria-pressed={multi ? on : undefined}
+            tabIndex={multi || on ? 0 : -1}
             title={o.title}
             onClick={() => onChange(o.value)}
           >

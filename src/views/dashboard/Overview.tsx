@@ -16,9 +16,11 @@ import {
   heatmapColumns,
   periodBars,
   progressLabel,
+  spanSummary,
   tierInfo,
   trailSummary,
   windowSums,
+  yearWindow,
 } from "../../lib/derive";
 import { formatDate, formatInt, formatLongDate, formatPercent, formatTokens, formatTowardGoal, formatUsd, parseDate, TOOL_NAMES, TOOL_SHORT } from "../../lib/format";
 import { useReducedMotion, useResolvedTheme } from "../../lib/theme";
@@ -315,15 +317,15 @@ function EfficiencyCard({ snap }: { snap: AppSnapshot }) {
 
 function YearOfLight({ snap }: { snap: AppSnapshot }) {
   const cols = useMemo(() => heatmapColumns(snap.days, snap.today.date, 53, snap.goals.weekStartsOn, snap.streak.restDays), [snap]);
-  const yearAgo = cols[0]?.[0]?.date ?? snap.today.date;
-  const inYear = snap.days.filter((d) => d.date >= yearAgo);
-  const lit = inYear.filter((d) => d.met).length;
-  const rests = cols.flat().filter((c) => c.frozen && !c.freeze).length;
-  const freezes = cols.flat().filter((c) => c.freeze).length;
+  const w = yearWindow(snap.today.date);
+  const lit = spanSummary(snap.days, w.from, w.to).daysLit;
+  const inWindow = cols.flat().filter((c) => c.date >= w.from && c.date <= w.to);
+  const rests = inWindow.filter((c) => c.frozen && !c.freeze).length;
+  const freezes = inWindow.filter((c) => c.freeze).length;
   return (
     <Card
       title="A year of light"
-      sub={`${lit} ${lit === 1 ? "day" : "days"} lit · longest streak ${snap.streak.longest}${rests ? ` · ${rests} rest ${rests === 1 ? "day" : "days"} bridged` : ""}${freezes ? ` · ${freezes} ${freezes === 1 ? "freeze" : "freezes"} spent` : ""}`}
+      sub={`${formatInt(lit)} ${lit === 1 ? "day" : "days"} lit in the last 365 days · longest streak ${snap.streak.longest}${rests ? ` · ${rests} rest ${rests === 1 ? "day" : "days"} bridged` : ""}${freezes ? ` · ${freezes} ${freezes === 1 ? "freeze" : "freezes"} spent` : ""}`}
       action={
         <div className="hlegend" aria-hidden>
           Less <i style={{ background: "var(--heat-0)" }} />

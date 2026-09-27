@@ -4,8 +4,8 @@
 // 1080 × 1920). Project names appear only when the user allowed them.
 
 import type { AppSnapshot, DayRow, ShareCardData, Tool } from "../api/types";
-import { buildTrailData } from "../lib/derive";
-import { addDays, formatPercent, formatRange, formatTokens, formatUsd, parseDate, TOOL_SHORT, TOOLS } from "../lib/format";
+import { bestRunIn, buildTrailRange, spanSummary, yearWindow } from "../lib/derive";
+import { addDays, daysBetween, formatDayRange, formatInt, formatPercent, formatTokens, formatUsd, percentValue, TOOL_SHORT, TOOLS } from "../lib/format";
 import { Trail } from "../trail/Trail";
 import type { TrailData, TrailLayout } from "../trail/types";
 
@@ -31,10 +31,15 @@ export interface CardModel {
   chip: string | null;
   projects: string[] | null;
   trail: TrailData;
+  /** Days the Trail spans (inclusive), and the span itself. */
   maxDays: number;
+  trailRange: { from: string; to: string };
 }
 
 export const CARD_SIZE: Record<CardFormat, { w: number; h: number }> = { square: { w: 1080, h: 1080 }, story: { w: 1080, h: 1920 } };
+
+/** Days of lead-in drawn before a streak on the streak card. */
+export const STREAK_LEAD_IN = 10;
 
 function sum(rows: DayRow[], f: (d: DayRow) => number): number {
   return rows.reduce((a, d) => a + f(d), 0);
@@ -43,15 +48,6 @@ function sum(rows: DayRow[], f: (d: DayRow) => number): number {
 function mixOf(rows: DayRow[]): { tool: Tool; share: number }[] {
   const tot = sum(rows, (d) => d.claude + d.codex + d.gemini) || 1;
   return TOOLS.map((tool) => ({ tool, share: sum(rows, (d) => d[tool]) / tot })).filter((m) => m.share >= 0.005);
-}
-
-function cacheOf(rows: DayRow[]): number {
-  const t = sum(rows, (d) => d.total);
-  return t ? sum(rows, (d) => d.cacheRead) / t : 0;
-}
-
-function bestRun(rows: DayRow[]): number {
-  return rows.reduce((b, d) => Math.max(b, d.streak), 0);
 }
 
 /** The cheapest 7-day window (cost per 1M) with at least 3 active days. */
@@ -65,7 +61,7 @@ export function leanestWeek(days: DayRow[], today: string, lookback = 180): { fr
     const cost = sum(w, (d) => d.cost);
     if (active < 3 || tokens <= 0 || cost <= 0) continue;
     const perM = cost / (tokens / 1e6);
-    if (!best || perM < best.perM) best = { from: w[0]!.date, to: w[6]!.date, perM, tokens, cache: cacheOf(w) };
+    if (!best || perM < best.perM) best = { from: w[0]!.date, to: w[6]!.date, perM, tokens, cache: spanSummary(w, w[0]!.date, w[6]!.date).cacheShare };
   }
   if (!best) return null;
   const all = rows.filter((d) => d.total > 0);
@@ -73,84 +69,114 @@ export function leanestWeek(days: DayRow[], today: string, lookback = 180): { fr
   return { ...best, vsUsual: usual > 0 ? (best.perM - usual) / usual : 0 };
 }
 
+/** The span the streak card describes: the current run, else the longest one. */
+export function streakSpan(snap: AppSnapshot): { from: string; to: string; days: number; current: boolean } | null {
+  const s = snap.streak;
+  if (s.current > 0 && s.currentStart) return { from: s.currentStart, to: snap.today.date, days: s.current, current: true };
+  if (s.longest > 0 && s.longestStart && s.longestEnd) return { from: s.longestStart, to: s.longestEnd, days: s.longest, current: false };
+  return null;
+}
+
+const days1 = (n: number) => `${formatInt(n)} ${n === 1 ? "day" : "days"}`;
+
 export function buildCardModel(snap: AppSnapshot, o: CardOptions, share: ShareCardData | null): CardModel {
   const today = snap.today.date;
   const days = snap.days;
   const story = o.format === "story";
-  const trailBase = (maxDays: number) => buildTrailData(snap, { maxDays });
+  const rest = snap.streak.restDays;
+  const span = (from: string, to: string) => ({ trail: buildTrailRange(snap, from, to, { restDays: rest }), maxDays: daysBetween(from, to) + 1, trailRange: { from, to } });
   let m: CardModel;
   if (o.template === "year") {
-    const from = addDays(today, -364);
-    const rows = days.filter((d) => d.date >= from);
-    const tokens = sum(rows, (d) => d.total);
-    const busiest = rows.reduce<DayRow | null>((b, d) => (!b || d.total > b.total ? d : b), null);
-    const first = rows.find((d) => d.total > 0)?.date ?? from;
+    const w = yearWindow(today);
+    const y = spanSummary(days, w.from, w.to);
     const stats: [string, string][] = [
-      ["Days lit", String(rows.filter((d) => d.met).length)],
-      ["Best streak", String(Math.max(bestRun(rows), 0))],
-      ["Busiest day", busiest ? formatTokens(busiest.total) : "—"],
-      ["From cache", formatPercent(cacheOf(rows))],
+      ["Days lit", formatInt(y.daysLit)],
+      ["Best streak", formatInt(bestRunIn(days, w.from, w.to, rest))],
+      ["Busiest day", y.busiest ? formatTokens(y.busiest.total) : "—"],
+      ["From cache", formatPercent(y.cacheShare)],
     ];
-    if (o.showCost) stats.splice(2, 1, ["Est. cost", formatUsd(sum(rows, (d) => d.cost), { cents: false })]);
+    if (o.showCost) stats.splice(2, 1, ["Est. cost", formatUsd(y.cost, { cents: false })]);
     m = {
-      headline: String(parseDate(today).getUTCFullYear()),
-      subline: `in light · ${formatTokens(tokens)} tokens`,
-      rangeLabel: formatRange(first, today),
+      headline: "My year",
+      subline: `in light · ${formatTokens(y.tokens)} tokens`,
+      rangeLabel: "Last 365 days",
       stats,
-      mix: mixOf(rows),
+      mix: mixOf(days.filter((d) => d.date >= w.from)),
       chip: null,
       projects: null,
-      trail: trailBase(365),
-      maxDays: 365,
+      ...span(w.from, w.to),
     };
   } else if (o.template === "lean") {
     const lw = leanestWeek(days, today);
-    const rows = lw ? days.filter((d) => d.date >= lw.from && d.date <= lw.to) : days.slice(-7);
-    const perM = lw?.perM ?? 0;
-    const stats: [string, string][] = [
-      ["From cache", formatPercent(lw?.cache ?? cacheOf(rows))],
-      ["vs usual", lw ? `${lw.vsUsual <= 0 ? "−" : "+"}${Math.round(Math.abs(lw.vsUsual) * 100)}%` : "—"],
-      ["Tokens", formatTokens(lw?.tokens ?? sum(rows, (d) => d.total))],
-      ["Streak", String(snap.streak.current)],
-    ];
-    if (o.showCost) stats.splice(3, 1, ["Est. cost", formatUsd(sum(rows, (d) => d.cost))]);
+    const from = lw?.from ?? addDays(today, -6);
+    const to = lw?.to ?? today;
+    const wk = spanSummary(days, from, to);
+    const leaner = lw ? Math.max(0, -lw.vsUsual) : 0;
+    const money = o.showCost && lw;
+    const stats: [string, string][] = money
+      ? [
+          ["From cache", formatPercent(wk.cacheShare)],
+          ["Tokens", formatTokens(wk.tokens)],
+          ["Est. cost", formatUsd(wk.cost)],
+          ["Per 1M vs usual", `−${Math.round(leaner * 100)}%`],
+        ]
+      : [
+          ["From cache", formatPercent(wk.cacheShare)],
+          ["Tokens", formatTokens(wk.tokens)],
+          ["Days lit", `${wk.daysLit} of 7`],
+          ["Busiest day", wk.busiest ? formatTokens(wk.busiest.total) : "—"],
+        ];
     m = {
-      headline: formatUsd(perM),
-      subline: "per million tokens, my leanest week yet",
-      rangeLabel: lw ? formatRange(lw.from, lw.to) : formatRange(addDays(today, -6), today),
+      headline: money ? formatUsd(lw.perM) : lw && leaner >= 0.01 ? `${Math.round(leaner * 100)}% leaner` : `${percentValue(wk.cacheShare)}% cache`,
+      subline: money ? "per million tokens, my leanest week yet" : lw && leaner >= 0.01 ? "per token than usual, my leanest week yet" : "from cache, my leanest week yet",
+      rangeLabel: formatDayRange(from, to),
       stats,
-      mix: mixOf(rows),
+      mix: mixOf(days.filter((d) => d.date >= from && d.date <= to)),
       chip: "Personal best · leanest week",
       projects: null,
-      trail: trailBase(60),
-      maxDays: 60,
+      ...span(from, to),
     };
   } else {
-    const n = snap.streak.current;
-    const longest = snap.streak.longest;
-    const first = days.find((d) => d.total > 0)?.date ?? today;
-    const from = first > addDays(today, -179) ? first : addDays(today, -179);
-    const rows = days.filter((d) => d.date >= from);
-    const lit = rows.filter((d) => d.met).length;
-    const stats: [string, string][] = [
-      ["Tokens", formatTokens(sum(rows, (d) => d.total))],
-      ["Days lit", String(lit)],
-      ["From cache", formatPercent(cacheOf(rows))],
-      ["Best streak", String(longest)],
-    ];
-    if (o.showCost) stats.splice(3, 1, ["Est. cost", formatUsd(sum(rows, (d) => d.cost), { cents: false })]);
-    const showing = n > 0 ? n : longest;
-    m = {
-      headline: `${showing} ${showing === 1 ? "day" : "days"}`,
-      subline: n > 1 ? "of unbroken light" : n === 1 ? "the first spark of a streak" : longest > 0 ? "my longest run of light" : "and the trail begins",
-      rangeLabel: formatRange(from, today),
-      stats,
-      mix: mixOf(rows),
-      chip: null,
-      projects: null,
-      trail: trailBase(48),
-      maxDays: 48,
-    };
+    const sp = streakSpan(snap);
+    if (sp) {
+      const st = spanSummary(days, sp.from, sp.to);
+      const all: Record<string, [string, string]> = {
+        tokens: ["Tokens", formatTokens(st.tokens)],
+        lit: ["Days lit", formatInt(st.daysLit)],
+        best: ["Best day", st.busiest ? formatTokens(st.busiest.total) : "—"],
+        cache: ["From cache", formatPercent(st.cacheShare)],
+        cost: ["Est. cost", formatUsd(st.cost, { cents: false })],
+      };
+      const keys = story ? ["tokens", "lit", "best", "cache"] : ["tokens", "best", "cache"];
+      if (o.showCost) keys.splice(keys.indexOf("best"), 1, "cost");
+      m = {
+        headline: days1(sp.days),
+        subline: sp.current ? (sp.days > 1 ? "of unbroken light" : "the first spark of a streak") : "my longest run of light",
+        rangeLabel: formatDayRange(sp.from, sp.to),
+        stats: keys.map((k) => all[k]!),
+        mix: mixOf(days.filter((d) => d.date >= sp.from && d.date <= sp.to)),
+        chip: null,
+        projects: null,
+        ...span(addDays(sp.from, -STREAK_LEAD_IN), sp.to),
+      };
+    } else {
+      const from = addDays(today, -13);
+      const st = spanSummary(days, from, today);
+      m = {
+        headline: "Day one",
+        subline: "and the trail begins",
+        rangeLabel: formatDayRange(from, today),
+        stats: [
+          ["Tokens", formatTokens(st.tokens)],
+          ["Active days", formatInt(st.activeDays)],
+          ["From cache", formatPercent(st.cacheShare)],
+        ],
+        mix: mixOf(days.filter((d) => d.date >= from)),
+        chip: null,
+        projects: null,
+        ...span(from, today),
+      };
+    }
   }
   if (!story) m.stats = m.stats.slice(0, 3);
   if (!o.showMix) m.mix = [];
@@ -304,7 +330,7 @@ export async function renderCard(model: CardModel, o: CardOptions): Promise<HTML
   c.font = `400 21px ${SERIF}`;
   c.fillText("Tokenstreak", padX + 30, 48);
   c.fillStyle = P.mut;
-  c.font = `500 12.5px ${SANS}`;
+  c.font = `500 ${story ? 15 : 13}px ${SANS}`;
   c.textAlign = "right";
   c.fillText(model.rangeLabel, W - padX, 46);
   c.textAlign = "left";
@@ -342,86 +368,92 @@ export async function renderCard(model: CardModel, o: CardOptions): Promise<HTML
     c.fillText(model.chip, padX + 28, cy + ch / 2 + 4.2);
   }
 
-  // footer
-  const footY = H - 28 - 3;
-  c.font = `500 11.5px ${SANS}`;
+  // footer: at least ~26 px at 1080 wide (square), ~31 px (story)
+  const fPx = story ? 15.5 : 13;
+  const g = fPx * 0.78;
+  const footY = H - (story ? 34 : 28) - 3;
+  // story: the credit gets its own line under the agent mix so they never collide
+  const mixY = story && model.mix.length ? footY - fPx - 12 : footY;
+  c.font = `500 ${fPx}px ${SANS}`;
   let fx = padX;
   for (const mx of model.mix) {
     const label = `${TOOL_SHORT[mx.tool]} ${Math.round(mx.share * 100)}%`;
     c.fillStyle = TOOL_COL[mx.tool];
-    const gy = footY - 4;
+    const gy = mixY - fPx * 0.35;
     if (mx.tool === "claude") {
       c.beginPath();
-      c.arc(fx + 4.5, gy, 4.5, 0, 7);
+      c.arc(fx + g / 2, gy, g / 2, 0, 7);
       c.fill();
     } else if (mx.tool === "codex") {
-      roundRect(c, fx, gy - 4.5, 9, 9, 2.5);
+      roundRect(c, fx, gy - g / 2, g, g, g * 0.28);
       c.fill();
     } else {
       c.beginPath();
-      c.moveTo(fx + 4.5, gy - 5);
-      c.lineTo(fx + 9.5, gy + 4.5);
-      c.lineTo(fx - 0.5, gy + 4.5);
+      c.moveTo(fx + g / 2, gy - g * 0.55);
+      c.lineTo(fx + g * 1.05, gy + g / 2);
+      c.lineTo(fx - g * 0.05, gy + g / 2);
       c.closePath();
       c.fill();
     }
     c.fillStyle = P.mut;
-    c.fillText(label, fx + 14, footY);
-    fx += 14 + c.measureText(label).width + 12;
+    c.fillText(label, fx + g + 5, mixY);
+    fx += g + 5 + c.measureText(label).width + fPx;
   }
-  c.textAlign = "right";
   c.fillStyle = P.mut;
-  c.fillText("tokenstreak · free & open source", W - padX, footY);
-  c.textAlign = "left";
+  if (story) c.fillText("tokenstreak · free & open source", padX, footY);
+  else {
+    const long = "tokenstreak · free & open source";
+    const credit = fx + c.measureText(long).width + 8 <= W - padX ? long : "tokenstreak";
+    c.textAlign = "right";
+    c.fillText(credit, W - padX, footY);
+    c.textAlign = "left";
+  }
 
   // projects line (only when allowed)
-  let statsBottom = footY - 11.5 - 18;
+  let statsBottom = mixY - fPx - (story ? 30 : 18);
   if (model.projects) {
-    c.font = `500 11.5px ${SANS}`;
+    c.font = `500 ${fPx}px ${SANS}`;
     c.fillStyle = P.mut;
     c.fillText(`Built: ${model.projects.join(" · ")}`, padX, statsBottom + 4);
-    statsBottom -= 22;
+    statsBottom -= fPx + 14;
   }
 
-  // stats
+  // stats: frameless serif numerals
   if (story) {
-    const gh = 2 * (11.5 + 6 + 46) + 22 + 44;
-    const gy = statsBottom - gh;
+    const lPx = 15.5;
+    const vPx = 60;
+    const rowH = lPx + 10 + vPx * 0.82;
+    const gap = 34;
     const gw = W - padX * 2;
-    c.save();
-    c.fillStyle = P.pill;
-    roundRect(c, padX, gy, gw, gh, 24);
-    c.fill();
-    c.strokeStyle = P.line;
-    c.lineWidth = 1;
-    c.stroke();
-    c.restore();
+    const top = statsBottom - (rowH * 2 + gap);
     model.stats.slice(0, 4).forEach(([lab, val], i) => {
       const col = i % 2;
       const row = Math.floor(i / 2);
-      const x = padX + 24 + col * ((gw - 48 - 26) / 2 + 26);
-      const y = gy + 22 + row * (11.5 + 6 + 46 + 22);
+      const x = padX + col * (gw / 2 + 8);
+      const y = top + row * (rowH + gap);
       c.fillStyle = P.mut;
-      c.font = `500 11.5px ${SANS}`;
-      c.fillText(lab, x, y + 11);
+      c.font = `500 ${lPx}px ${SANS}`;
+      c.fillText(lab, x, y + lPx);
       c.fillStyle = P.ink;
-      c.font = `400 46px ${SERIF}`;
-      c.fillText(val, x, y + 11.5 + 6 + 38);
+      const vp = fit(c, val, (px) => `400 ${px}px ${SERIF}`, vPx, gw / 2 - 16);
+      c.font = `400 ${vp}px ${SERIF}`;
+      c.fillText(val, x, y + lPx + 10 + vPx * 0.82);
     });
   } else {
     let x = padX;
     const valBase = statsBottom;
+    const lPx = 12.5;
     for (const [lab, val] of model.stats) {
-      c.font = `400 34px ${SERIF}`;
+      c.font = `400 36px ${SERIF}`;
       const vw = c.measureText(val).width;
-      c.font = `500 11.5px ${SANS}`;
+      c.font = `500 ${lPx}px ${SANS}`;
       const lw = c.measureText(lab).width;
       c.fillStyle = P.mut;
-      c.fillText(lab, x, valBase - 34 * 0.8 - 8);
+      c.fillText(lab, x, valBase - 36 * 0.8 - 9);
       c.fillStyle = P.ink;
-      c.font = `400 34px ${SERIF}`;
+      c.font = `400 36px ${SERIF}`;
       c.fillText(val, x, valBase);
-      x += Math.max(vw, lw) + 26;
+      x += Math.max(vw, lw) + 28;
     }
   }
   return out;

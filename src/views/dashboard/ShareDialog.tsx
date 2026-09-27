@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { AppSnapshot, ShareCardData } from "../../api/types";
 import { IconClose, IconCopy, IconDownload } from "../../components/icons";
 import { Seg, Toggle } from "../../components/ui";
-import { formatUsd } from "../../lib/format";
+import { formatInt, formatUsd } from "../../lib/format";
 import { buildCardModel, canvasToBase64, CARD_SIZE, cardFileName, copyCanvas, leanestWeek, renderCard, type CardOptions } from "../../share/cards";
 import { useApi, useSettings } from "../../state/store";
 
@@ -57,7 +57,24 @@ export function ShareDialog({ snap, onClose }: { snap: AppSnapshot; onClose: () 
   }, [canvas]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") return onClose();
+      // keep Tab inside the dialog
+      const d = dialog.current;
+      if (e.key !== "Tab" || !d) return;
+      const f = [...d.querySelectorAll<HTMLElement>("button:not([disabled]), [href], input, [tabindex]:not([tabindex='-1'])")].filter((el) => el.offsetParent !== null);
+      if (!f.length) return;
+      const first = f[0]!;
+      const last = f[f.length - 1]!;
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || active === d)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !d.contains(active))) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
     window.addEventListener("keydown", onKey);
     dialog.current?.focus();
     return () => window.removeEventListener("keydown", onKey);
@@ -109,9 +126,9 @@ export function ShareDialog({ snap, onClose }: { snap: AppSnapshot; onClose: () 
             <div className="tpls" role="radiogroup" aria-label="Template">
               {(
                 [
-                  ["streak", `${snap.streak.current || snap.streak.longest} days`, "Streak"],
-                  ["year", String(new Date(snap.today.date).getUTCFullYear()), "Year in light"],
-                  ["lean", lean ? formatUsd(lean.perM) : "—", "Personal best"],
+                  ["streak", snap.streak.current || snap.streak.longest ? `${formatInt(snap.streak.current || snap.streak.longest)} days` : "Day one", snap.streak.current ? "Streak" : "Best run"],
+                  ["year", "365 days", "My year in light"],
+                  ["lean", lean ? (o.showCost ? formatUsd(lean.perM) : `${Math.round(Math.max(0, -lean.vsUsual) * 100)}% leaner`) : "—", "Leanest week"],
                 ] as const
               ).map(([k, big, lab]) => (
                 <button key={k} type="button" role="radio" aria-checked={o.template === k} className={`tpl${o.template === k ? " on" : ""}`} onClick={() => set("template", k)}>

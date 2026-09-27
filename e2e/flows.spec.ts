@@ -68,7 +68,7 @@ test("share dialog: every template and format renders; Save PNG downloads", asyn
   await page.getByTestId("share-open").click();
   const dialog = page.getByTestId("share-dialog");
   await expect(dialog).toBeVisible();
-  for (const tpl of ["Streak", "Year in light", "Personal best"]) {
+  for (const tpl of ["Streak", "My year in light", "Leanest week"]) {
     await dialog.getByRole("radio", { name: new RegExp(tpl) }).click();
     for (const fmt of ["Square 1:1", "Story 9:16"]) {
       await dialog.getByRole("radio", { name: fmt }).click();

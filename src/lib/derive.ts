@@ -86,6 +86,84 @@ export function buildTrailData(snap: AppSnapshot, opts: TrailBuildOptions = {}):
   };
 }
 
+/**
+ * Trail data for an arbitrary span of days (share cards). The last day of the
+ * span is the comet's head; days before it are history.
+ */
+export function buildTrailRange(snap: AppSnapshot, from: string, to: string, opts: { restDays?: number[] } = {}): TrailData {
+  const full = buildTrailData(snap, { restDays: opts.restDays });
+  if (to >= snap.today.date) return { ...full, history: full.history.filter((d) => d.date >= from) };
+  const byDate = new Map(snap.days.map((d) => [d.date, d]));
+  const headRow = byDate.get(to);
+  const history = full.history.filter((d) => d.date >= from && d.date < to);
+  return {
+    ...full,
+    today: headRow
+      ? { tokens: headRow.total, tools: dayTools(headRow), cacheShare: dayCacheShare(headRow), date: to }
+      : { tokens: 0, tools: {}, cacheShare: 0, date: to },
+    history,
+  };
+}
+
+/* ---------------- shared windows (dashboard and share cards agree) ---------------- */
+
+/** The rolling year: the last 365 days including today. */
+export function yearWindow(today: string): { from: string; to: string } {
+  return { from: addDays(today, -364), to: today };
+}
+
+export interface SpanSummary {
+  from: string;
+  to: string;
+  tokens: number;
+  daysLit: number;
+  activeDays: number;
+  cacheShare: number;
+  cost: number;
+  busiest: { date: string; total: number } | null;
+}
+
+/** Totals over [from, to] from the dense day rows. Cache share uses the exact definition when rows carry it. */
+export function spanSummary(days: DayRow[], from: string, to: string): SpanSummary {
+  const rows = days.filter((d) => d.date >= from && d.date <= to);
+  let tokens = 0;
+  let cost = 0;
+  let cache = 0;
+  let denom = 0;
+  let busiest: DayRow | null = null;
+  for (const d of rows) {
+    tokens += d.total;
+    cost += d.cost;
+    cache += d.cacheRead;
+    denom += d.input !== undefined && d.cacheWrite !== undefined ? d.input + d.cacheRead + d.cacheWrite : d.total;
+    if (d.total > 0 && (!busiest || d.total > busiest.total)) busiest = d;
+  }
+  return {
+    from,
+    to,
+    tokens,
+    daysLit: rows.filter((d) => d.met).length,
+    activeDays: rows.filter((d) => d.total > 0).length,
+    cacheShare: denom > 0 ? cache / denom : 0,
+    cost,
+    busiest: busiest ? { date: busiest.date, total: busiest.total } : null,
+  };
+}
+
+/** Longest run of lit days inside [from, to] (runs bridged by rest days or freezes continue). */
+export function bestRunIn(days: DayRow[], from: string, to: string, restDays: number[] = []): number {
+  const rest = new Set(restDays);
+  let run = 0;
+  let best = 0;
+  for (const d of days) {
+    if (d.date < from || d.date > to) continue;
+    if (d.met) best = Math.max(best, ++run);
+    else if (d.frozen || rest.has(weekdayIndex(d.date)) || d.date === to) continue;
+    else run = 0;
+  }
+  return best;
+}
+
 /** Accessible one-line summary of the Trail. */
 export function trailSummary(snap: AppSnapshot): string {
   const pct = Math.round(snap.today.progress * 100);
