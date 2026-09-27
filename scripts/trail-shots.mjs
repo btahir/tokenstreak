@@ -92,7 +92,7 @@ for (const theme of themes) {
 
   if (want("goal")) {
     for (const view of ["popover", "dashboard"]) {
-      await go({ view, preset: "goal-hit", wall: "1" }, view === "popover" ? { width: 440, height: 760 } : { width: 1180, height: 800 }, 1300);
+      await go(view === "popover" ? { view, preset: "goal-hit", wall: "1" } : { view, preset: "goal-hit" }, view === "popover" ? { width: 440, height: 760 } : { width: 1180, height: 800 }, 1300);
       await page.evaluate(() => window.__tokenstreakMock.triggerGoalReached());
       const t0 = Date.now();
       for (const ms of [80, 250, 450, 700, 1000, 1500, 2200, 3200]) {

@@ -289,9 +289,20 @@ export function clusterRects(rects: Rect[], minGap: number): Rect[] {
   return out;
 }
 
-export function routeY(xs: number[], ys: number[], half: number[], rectsIn: Rect[], o: RouteOptions): number[] {
+export function routeY(xs: number[], ys: number[], halfIn: number[], rectsIn: Rect[], o: RouteOptions): number[] {
   const n = xs.length;
   if (!n) return [];
+  // clearance varies smoothly along the path (a running max, then smoothed), so
+  // a thin day next to a wide one never makes the route jump
+  const W = 4;
+  const half = gaussian(
+    halfIn.map((_, i) => {
+      let m = 0;
+      for (let j = Math.max(0, i - W); j <= Math.min(n - 1, i + W); j++) m = Math.max(m, halfIn[j]!);
+      return m;
+    }),
+    2,
+  );
   const margin = o.margin ?? 8;
   const ramp = o.ramp ?? 56;
   const maxHalf = half.reduce((a, b) => Math.max(a, b), 0);

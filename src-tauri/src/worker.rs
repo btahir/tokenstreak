@@ -101,10 +101,10 @@ fn run(
             let t = Instant::now();
             let (snap, fresh, settings, roots, changed) = {
                 let mut e = engine.lock();
-                let report = e.refresh();
+                let report = e.refresh_lazy();
                 e.set_watching(watcher.is_some());
                 let fresh = e.sync_unlocks();
-                e.persist();
+                e.persist_lazy();
                 if report.changed() {
                     tracing::info!(
                         files = report.files,

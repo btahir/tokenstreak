@@ -223,9 +223,19 @@ const TOOL_COL: Record<Tool, string> = { claude: "#F7995A", codex: "#EC5F80", ge
 function trailLayout(o: CardOptions, maxDays: number, chip: boolean): Partial<TrailLayout> {
   // cards with a chip under the headline push the trail a little lower
   const d = chip ? 0.05 : 0;
-  return o.format === "story"
-    ? { baseY: 0.6 + d, amp: 0.12, rise: 0.22, headX: 0.84, headR: 22, maxDays, top: 0.38 + d, bottom: 0.74 }
-    : { baseY: 0.66 + d, amp: 0.08, rise: 0.12, headX: 0.86, maxDays, top: 0.46 + d * 1.4, bottom: 0.82 };
+  const L: Partial<TrailLayout> =
+    o.format === "story"
+      ? // 9:16: the ribbon fills the band between the headline and the stats (which start near 0.71)
+        { baseY: 0.6 + d * 0.5, amp: 0.1, rise: 0.1, headX: 0.84, headR: 22, maxDays, top: 0.45 + d, bottom: 0.68, wMax: 20 }
+      : { baseY: 0.66 + d, amp: 0.08, rise: 0.12, headX: 0.86, maxDays, top: 0.46 + d * 1.4, bottom: 0.82 };
+  if (maxDays <= 14) {
+    // a week: one deliberate rising arc across the card instead of a tiny comet in a corner
+    Object.assign(L, { left: 0.07, maxStep: 400, amp: 0.02, rise: 0.04, climb: o.format === "story" ? 0.12 : 0.15, wMax: o.format === "story" ? 22 : 20 });
+    if (o.format === "square") L.baseY = 0.62 + d;
+  }
+  // the lean card is about efficiency, not the streak: every active day shines
+  if (o.template === "lean") L.emphasizeAll = true;
+  return L;
 }
 
 function logo(c: CanvasRenderingContext2D, x: number, y: number, s: number): void {

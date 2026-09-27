@@ -56,6 +56,10 @@ export interface TrailLayout {
   bottom?: number;
   /** Largest day step, in layout units (scaled by the size factor). Default 34 (popover/card) or 58 (full). */
   maxStep?: number;
+  /** Fraction of the height the path climbs from its first day to the head (short, deliberate arcs). */
+  climb?: number;
+  /** Draw every day with tokens at full ribbon brightness (cards about something other than the streak). */
+  emphasizeAll?: boolean;
   /** Fixed HUD rectangles (CSS px) the path routes around, in addition to `setAvoid()`. */
   avoid?: { x: number; y: number; w: number; h: number }[];
 }
