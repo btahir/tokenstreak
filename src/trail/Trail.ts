@@ -1059,7 +1059,7 @@ export class Trail {
     for (const r of runs) {
       if (r.current || roles[r.a] !== "past" || (step < 6 && r.days < 7)) continue;
       const p = pts[r.b]!;
-      for (let e = 0; e < 2; e++) embers.push({ x: p.x + (er() * 0.6 + 0.4) * 6 * k * (e + 1), y: p.y + (3 + er() * 4) * k * (e + 1), r: (0.75 + er() * 0.5) * k * (1 - e * 0.25), a: 0.75 - e * 0.3 });
+      for (let e = 0; e < 1; e++) embers.push({ x: p.x + (er() * 0.6 + 0.4) * 6 * k * (e + 1), y: p.y + (3 + er() * 4) * k * (e + 1), r: (0.75 + er() * 0.5) * k * (1 - e * 0.25), a: 0.75 - e * 0.3 });
     }
     for (let q = 1; q < m - 1; q++) {
       if (roles[q] !== "gap" || roles[q - 1] === "gap") continue;
@@ -1068,7 +1068,7 @@ export class Trail {
       const gx0 = pts[q - 1]!.x;
       const gx1 = pts[Math.min(m - 1, e + 1)]!.x;
       // one ember per real break (2+ days, or wide enough to see); a run's end already has its own
-      if (roles[q - 1] === "past" || (lod === 1 && e === q) || gx1 - gx0 < (step < 6 ? 16 : 12)) continue;
+      if (roles[q - 1] === "past" || (lod === 1 && e - q < 2) || gx1 - gx0 < (step < 6 ? 16 : 12)) continue;
       const gx = gx0 + Math.min((gx1 - gx0) * 0.35, 10 * k);
       embers.push({ x: gx, y: this.yAt(gx) + 5 * k, r: 0.95 * k, a: 0.55 });
     }
@@ -1255,13 +1255,13 @@ export class Trail {
       if (sp && this.themeName === "dark") this.strandPaths(c, sp.s0, sp.s1, 0, T.pastDim * 0.7, false);
     }
     for (const e of this.embers) {
-      const eg = c.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.r * 4);
+      const eg = c.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.r * 3);
       eg.addColorStop(0, rgba(T.ember, e.a * (this.themeName === "dark" ? 0.9 : 0.65)));
       eg.addColorStop(0.25, rgba(T.ember, e.a * 0.35));
       eg.addColorStop(1, rgba(T.ember, 0));
       c.fillStyle = eg;
       c.beginPath();
-      c.arc(e.x, e.y, e.r * 4, 0, 7);
+      c.arc(e.x, e.y, e.r * 3, 0, 7);
       c.fill();
     }
     // a soft 40% mask under any HUD element the route could not clear
@@ -1953,7 +1953,7 @@ export class Trail {
         col: T.confetti[i % T.confetti.length]!,
         g: 120 * k,
         drag: 2.1,
-        star: i % 6 === 0,
+        star: i % 9 === 0,
       });
     }
   }

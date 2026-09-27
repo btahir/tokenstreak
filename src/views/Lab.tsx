@@ -14,9 +14,9 @@ export function Lab() {
   const [snaps, setSnaps] = useState<Record<string, AppSnapshot>>({});
   const only = new URLSearchParams(location.search).get("part") ?? "all";
   useEffect(() => {
-    void Promise.all(["heavy-multi-tool", "streak-30", "streak-at-risk", "goal-hit"].map(async (id) => [id, (await loadPreset(id)).snapshot] as const)).then((xs) => setSnaps(Object.fromEntries(xs)));
+    void Promise.all(["heavy-multi-tool", "streak-30", "streak-at-risk", "goal-hit", "long-history", "sparse"].map(async (id) => [id, (await loadPreset(id)).snapshot] as const)).then((xs) => setSnaps(Object.fromEntries(xs)));
   }, []);
-  if (Object.keys(snaps).length < 4) return <div data-testid="lab-loading" />;
+  if (Object.keys(snaps).length < 6) return <div data-testid="lab-loading" />;
   return (
     <div className="lab" data-testid="lab">
       {(only === "all" || only === "trails") && (
@@ -33,6 +33,12 @@ export function Lab() {
           </div>
           <div className="lab__full">
             <TrailCanvas data={buildTrailData(snaps["streak-30"]!, { maxDays: 120 })} theme={theme} variant="full" layout={{ maxDays: 120 }} ariaLabel="full" />
+          </div>
+          <div className="lab__full">
+            <TrailCanvas data={buildTrailData(snaps["long-history"]!, { maxDays: 2000 })} theme={theme} variant="full" layout={{ maxDays: 2000 }} ariaLabel="long history, all" />
+          </div>
+          <div className="lab__full">
+            <TrailCanvas data={buildTrailData(snaps["sparse"]!, { maxDays: 365 })} theme={theme} variant="full" layout={{ maxDays: 365 }} ariaLabel="sparse" />
           </div>
         </>
       )}

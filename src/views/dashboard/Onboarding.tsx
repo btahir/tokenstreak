@@ -15,7 +15,7 @@ import { TrailCanvas } from "../../trail/TrailCanvas";
 import { DAY0, toolDays } from "../popover/FirstRun";
 
 type Step = 1 | 2 | 3;
-const REVEAL_LAYOUT = { baseY: 0.6, headX: 0.9, maxDays: 200, top: 0.36, bottom: 0.78, headR: 9, wMax: 13 };
+const REVEAL_LAYOUT = { baseY: 0.6, headX: 0.9, maxDays: 200, top: 0.36, bottom: 0.78, headR: 10, wMax: 16 };
 
 export function Onboarding({ snap, onDone }: { snap: AppSnapshot; onDone: () => void }) {
   const q = Number(new URLSearchParams(location.search).get("step"));
