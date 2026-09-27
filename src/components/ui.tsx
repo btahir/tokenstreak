@@ -210,13 +210,15 @@ export function Meter({ parts }: { parts: { key: string; value: number; color?: 
 }
 
 /** Counts up to `value` when it changes (respecting reduced motion). */
-export function useCountUp(value: number, ms = 700): number {
+export function useCountUp(value: number, ms = 700, opts: { jumpDown?: boolean } = {}): number {
   const [shown, setShown] = useState(value);
   const from = useRef(value);
   const raf = useRef(0);
+  const jumpDown = !!opts.jumpDown;
   useEffect(() => {
     const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduced || from.current === value) {
+    // a reset (a new day, a lower value) jumps instead of counting down
+    if (reduced || from.current === value || (jumpDown && value < from.current)) {
       from.current = value;
       setShown(value);
       return;
@@ -235,7 +237,7 @@ export function useCountUp(value: number, ms = 700): number {
       cancelAnimationFrame(raf.current);
       from.current = value;
     };
-  }, [value, ms]);
+  }, [value, ms, jumpDown]);
   return shown;
 }
 

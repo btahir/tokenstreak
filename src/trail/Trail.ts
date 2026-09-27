@@ -625,6 +625,13 @@ export class Trail {
     };
   }
 
+  /** Debug/test view of the tool strands along the current run (CSS px). */
+  strandGeometry(t = 0): { x: number; y: number; w: number }[][] {
+    const r = this.curRun;
+    if (!r || r.s1 - r.s0 < 2) return [];
+    return TOOLS.map((_, ti) => this.strandPoints(r.s0, r.s1, t, ti, true));
+  }
+
   /** Marks user activity so the loop returns to full frame rate. */
   poke(): void {
     this.lastActivity = performance.now();
@@ -1317,7 +1324,7 @@ export class Trail {
       const xb = this.axis.xSplit;
       const yb = this.yAt(xb);
       const sa = this.sampleAtX(xb);
-      const half = (sa ? sa.wd * T.glowMul * 0.5 : 10 * k) + 2;
+      const half = (sa ? sa.wd * T.bodyMul * 0.5 : 6 * k) + 3;
       c.save();
       c.globalCompositeOperation = "destination-out";
       c.strokeStyle = "rgba(0,0,0,0.85)";
@@ -1330,12 +1337,6 @@ export class Trail {
       }
       c.restore();
       c.globalCompositeOperation = T.blend;
-    }
-    // afterglow strands on past ribbons (static; only the current run's strands are live)
-    for (const r of this.runs) {
-      if (r.current) continue;
-      const sp = this.runSamples(r);
-      if (sp && this.themeName === "dark" && r.days >= 7) this.strandPaths(c, sp.s0, sp.s1, 0, T.pastDim * 0.7, false);
     }
     for (const e of this.embers) {
       const eg = c.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.r * 3);
@@ -1363,20 +1364,6 @@ export class Trail {
         }
     }
     c.globalCompositeOperation = "source-over";
-  }
-
-  private runSamples(r: RunInfo): { s0: number; s1: number } | null {
-    const piece = this.pieces.find((p) => r.a >= p.p0 && r.b <= p.p1);
-    if (!piece) return null;
-    let s0 = -1;
-    let s1 = -1;
-    for (let q = piece.s0; q <= piece.s1; q++) {
-      const seg = this.samples[q]!.seg;
-      if (seg >= r.a && s0 < 0) s0 = q;
-      if (seg <= r.b) s1 = q;
-    }
-    if (piece.head) s1 = Math.min(s1, this.cacheEnd);
-    return s0 >= 0 && s1 - s0 >= 2 ? { s0, s1 } : null;
   }
 
   /** Draws `src` into `dst` (same pixel size) through a device-pixel blur. */
@@ -1729,38 +1716,77 @@ export class Trail {
     return best && bd <= Math.max(2, this.step) ? best : null;
   }
 
-  /** Tool-mix strands: three thin threads weaving inside a ribbon. */
-  private strandPaths(c: Ctx, a: number, b: number, t: number, dim: number, live: boolean): void {
+  /**
+   * Tool-mix strand paths: resampled along arc length at <= 2 px (position and normal
+   * interpolated between samples), phased by arc length, so they are smooth curves in
+   * any layout (per-sample offsets on sparse samples aliased into closed polygons).
+   * Each point carries a weight that fades the strand where the ribbon is thinner than
+   * about 6 px or the underlying samples are sparse.
+   */
+  strandPoints(a: number, b: number, t: number, ti: number, live = true): { x: number; y: number; w: number }[] {
     const S = this.samples;
     const T = this.theme;
     const k = this.k;
     const dark = this.themeName === "dark";
     const wave = T.strandWave * k;
+    const out: { x: number; y: number; w: number }[] = [];
+    if (b - a < 1) return out;
+    const ds = 2;
+    let len = 0;
+    let total = 0;
+    for (let j = a + 1; j <= b; j++) total += Math.hypot(S[j]!.x - S[j - 1]!.x, S[j]!.y - S[j - 1]!.y);
+    for (let j = a; j < b; j++) {
+      const p = S[j]!;
+      const q = S[j + 1]!;
+      const seg = Math.hypot(q.x - p.x, q.y - p.y);
+      const n = Math.max(1, Math.ceil(seg / ds));
+      // sparse samples (a compressed axis): the ribbon's shape between them is guesswork
+      const sparse = smoothstep(wave / 8, wave / 5, seg);
+      for (let u = 0; u < n; u++) {
+        const f = u / n;
+        const x = lerp(p.x, q.x, f);
+        const y = lerp(p.y, q.y, f);
+        let nx = lerp(p.nx, q.nx, f);
+        let ny = lerp(p.ny, q.ny, f);
+        const nl = Math.hypot(nx, ny) || 1;
+        nx /= nl;
+        ny /= nl;
+        const wd = lerp(p.wd, q.wd, f);
+        const l = len + seg * f;
+        const tp = Math.min(1, l / (6 * ds * 3), (total - l) / (3 * ds * 3) + (live ? 1 : 0.1));
+        const off = (Math.sin(l / wave + ti * 2.09 + t * (0.7 + ti * 0.13)) * 0.8 + Math.sin(l / (wave * 2.3) - ti + t * 0.3) * 0.2) * wd * (dark ? 0.36 : 0.26) * tp;
+        out.push({ x: x + nx * off, y: y + ny * off, w: smoothstep(4.5, 7, wd) * (1 - sparse) * lerp(p.a, q.a, f) * clamp(lerp(p.sh[ti] ?? 0, q.sh[ti] ?? 0, f) * 1.6 + 0.08, 0, 1) });
+      }
+      len += seg;
+    }
+    const e = S[b]!;
+    out.push({ x: e.x, y: e.y, w: 0 });
+    return out;
+  }
+
+  /** Tool-mix strands: three thin threads weaving inside the current run. */
+  private strandPaths(c: Ctx, a: number, b: number, t: number, dim: number, live: boolean): void {
+    const S = this.samples;
+    const T = this.theme;
+    const k = this.k;
+    const dark = this.themeName === "dark";
     TOOLS.forEach((tk, ti) => {
       let any = false;
       for (let j = a; j <= b; j += 4) if ((S[j]!.sh[ti] ?? 0) > 0.03) any = true;
       if (!any) return;
-      const g = c.createLinearGradient(S[a]!.x, 0, S[b]!.x, 0);
-      const span = S[b]!.x - S[a]!.x || 1;
-      const every = Math.max(1, Math.floor((b - a) / 30));
+      const pts = this.strandPoints(a, b, t, ti, live);
+      if (pts.length < 2) return;
+      const g = c.createLinearGradient(pts[0]!.x, 0, pts[pts.length - 1]!.x, 0);
+      const x0 = pts[0]!.x;
+      const span = pts[pts.length - 1]!.x - x0 || 1;
+      const every = Math.max(1, Math.floor(pts.length / 40));
       const col = mixRGB(T.tool[tk], dark ? [255, 250, 240] : [255, 255, 255], T.strandWhite);
-      for (let j = a; j <= b; j += every) {
-        const s = S[j]!;
-        g.addColorStop(clamp((s.x - S[a]!.x) / span, 0, 1), rgba(col, T.strandA * dim * s.a * clamp(s.sh[ti]! * 1.6 + 0.08, 0, 1)));
-      }
+      for (let j = 0; j < pts.length; j += every) g.addColorStop(clamp((pts[j]!.x - x0) / span, 0, 1), rgba(col, T.strandA * dim * pts[j]!.w));
       c.strokeStyle = g;
       c.lineWidth = Math.max(0.6, (dark ? 0.9 : 0.75) * k);
+      c.lineJoin = "round";
       c.beginPath();
-      for (let j = a; j <= b; j++) {
-        const s = S[j]!;
-        const tp = Math.min(1, (j - a) / 6, (b - j) / 3 + (live ? 1 : 0.1));
-        const off =
-          (Math.sin(s.x / wave + ti * 2.09 + t * (0.7 + ti * 0.13)) * 0.8 + Math.sin(s.x / (wave * 2.3) - ti + t * 0.3) * 0.2) * s.wd * (dark ? 0.36 : 0.26) * tp;
-        const x = s.x + s.nx * off;
-        const y = s.y + s.ny * off;
-        if (j === a) c.moveTo(x, y);
-        else c.lineTo(x, y);
-      }
+      pts.forEach((p, j) => (j === 0 ? c.moveTo(p.x, p.y) : c.lineTo(p.x, p.y)));
       c.stroke();
     });
   }

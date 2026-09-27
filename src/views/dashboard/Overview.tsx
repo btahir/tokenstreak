@@ -1,12 +1,12 @@
 // "Your trail": the full Trail with a hover tooltip, stat tiles, charts, the
 // efficiency score, a year of light, breakdowns and recent achievements.
 
-import { Fragment, useMemo, useRef, useState } from "react";
+import { Fragment, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AppSnapshot, Breakdown, RangeKind } from "../../api/types";
 import { Badge } from "../../components/badges";
 import { BarChart, Heatmap, RankList, Sparkline } from "../../components/charts";
 import { IconLock, IconShare, Spark } from "../../components/icons";
-import { Card, Delta, Glyph, Ring, Seg, Tile } from "../../components/ui";
+import { Card, Delta, Glyph, Ring, Seg, Tile, useCountUp } from "../../components/ui";
 import {
   baseline,
   buildTrailData,
@@ -86,14 +86,45 @@ function Hero({ snap, maxDays }: { snap: AppSnapshot; maxDays: number }) {
   const [hover, setHover] = useState<TrailHover | null>(null);
   const [shows, setShows] = useState<TrailLayoutInfo | null>(null);
   const data = useMemo(() => buildTrailData(snap, { maxDays }), [snap, maxDays]);
-  const t = snap.today;
   const tier = tierInfo(snap.streak.current);
   const afterglow = snap.streak.current === 0 && snap.streak.longest > 0 ? tierInfo(snap.streak.longest) : null;
   const heroRef = useRef<HTMLElement>(null);
   // the same goal-moment choreography as the popover, without its toast
   const { celebrateKey } = useGoalMoment({ celebration, visible: true, reduced, root: heroRef });
   const layout = useMemo(() => ({ maxDays }), [maxDays]);
-  const pct = Math.round(t.progress * 100);
+
+  // A reset (new day, lower total) never double-exposes the HUD: fade the old values
+  // out, swap, fade the new ones in.
+  const hudRef = useRef<HTMLDivElement>(null);
+  const [hudSnap, setHudSnap] = useState(snap);
+  useLayoutEffect(() => {
+    if (snap === hudSnap) return;
+    const reset = snap.today.date !== hudSnap.today.date || snap.today.tokens.total < hudSnap.today.tokens.total;
+    const el = hudRef.current;
+    if (!reset || !el || reduced) {
+      setHudSnap(snap);
+      return;
+    }
+    const out = el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: "ease-in", fill: "forwards" });
+    out.onfinish = () => {
+      setHudSnap(snap);
+      requestAnimationFrame(() => {
+        out.cancel();
+        el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: "ease-out" });
+      });
+    };
+    return () => out.cancel();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snap]);
+  const ht = hudSnap.today;
+  // Like the popover: the day reads lit only when the counting number reaches the goal,
+  // so "Goal lit", the chip and the streak swap together with the ignition.
+  const heroValue = useCountUp(ht.tokens.total, 900, { jumpDown: true });
+  const shownMet = ht.met && ht.goal > 0 && heroValue >= ht.goal;
+  const holding = ht.met && !shownMet;
+  const shownStreak = holding && celebration && hudSnap.streak.current > 0 ? hudSnap.streak.current - 1 : hudSnap.streak.current;
+  const shownProgress = ht.goal > 0 ? heroValue / ht.goal : 0;
+  const pct = Math.floor(shownProgress * 100);
   return (
     <section className="hero ts-grain" data-testid="hero" ref={heroRef}>
       <TrailCanvas
@@ -108,18 +139,22 @@ function Hero({ snap, maxDays }: { snap: AppSnapshot; maxDays: number }) {
         keyboard
         ariaLabel={`${trailSummary(snap)}. Use the arrow keys to step through days.`}
       />
-      <div className="hero__hud" data-trail-avoid="children">
-        <div className="hero__lab">{t.met ? "Goal lit today" : "Today’s light"}</div>
-        <div className="hero__num">
-          {formatTowardGoal(t.tokens.total, t.goal)}
-          {t.goal > 0 && <small>of {formatTokens(t.goal)}</small>}
+      <div className="hero__hud" data-trail-avoid="children" ref={hudRef}>
+        <div className="hero__lab">{shownMet ? "Goal lit today" : "Today’s light"}</div>
+        <div className="hero__num" data-testid="hero-tokens">
+          {formatTowardGoal(heroValue, ht.goal)}
+          {ht.goal > 0 && <small>of {formatTokens(ht.goal)}</small>}
         </div>
         <div className="hero__row">
-          <span className="hpill">
+          <span className="hpill" data-testid="hero-streak">
             <Spark size={13} from={theme === "dark" ? "#FFF6EA" : "#FFB27A"} to={theme === "dark" ? "#FFD6A8" : "#F0728C"} />
-            {streakLine(snap.streak.current, snap.streak.longest)}
+            {streakLine(shownStreak, Math.max(hudSnap.streak.longest - (shownStreak < hudSnap.streak.current && hudSnap.streak.longest === hudSnap.streak.current ? 1 : 0), shownStreak))}
           </span>
-          {t.goal > 0 && <span className="hpill">{t.met ? `Lit · ${progressLabel(t.progress)}` : `${pct}% · ${formatTokens(t.remaining)} to go`}</span>}
+          {ht.goal > 0 && (
+            <span className="hpill" data-testid="hero-progress">
+              {shownMet ? `Lit · ${progressLabel(ht.progress)}` : `${pct}% · ${ht.goal - heroValue < 1000 ? "under 1K" : formatTokens(ht.goal - heroValue)} to go`}
+            </span>
+          )}
         </div>
       </div>
       <span className="hpill hero__tier" data-testid="tier-chip" data-trail-avoid>

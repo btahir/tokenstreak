@@ -307,3 +307,61 @@ test.describe("the ribbon body is soft in every engine", () => {
     expect(edge.median).toBeGreaterThanOrEqual(1.5);
   });
 });
+
+/* ---- launch media: strands never close into loops; the hero swaps on ignition ---- */
+
+for (const [preset, range] of [
+  ["long-history", "All"],
+  ["heavy-multi-tool", "Year"],
+] as const) {
+  test(`tool strands (${preset}, ${range}): smooth, finely sampled, never self-intersecting`, async ({ page }) => {
+    await page.setViewportSize({ width: 1180, height: 800 });
+    await page.goto(url({ view: "dashboard", preset, theme: "dark" }));
+    await mock(page);
+    if (range !== "Year") await page.getByRole("radio", { name: range, exact: true }).click();
+    await layoutOf(page, "trail-full");
+    const r = await page.evaluate(() => {
+      const canvas = document.querySelector<HTMLCanvasElement>('[data-testid="trail-full"]')!;
+      const t = (window as unknown as { __trails: { canvas: HTMLCanvasElement; strandGeometry: (t: number) => { x: number; y: number; w: number }[][] }[] }).__trails.find((x) => x.canvas === canvas)!;
+      const cross = (a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }, d: { x: number; y: number }) => {
+        const o = (p: typeof a, q: typeof a, s: typeof a) => Math.sign((q.x - p.x) * (s.y - p.y) - (q.y - p.y) * (s.x - p.x));
+        return o(a, b, c) * o(a, b, d) < 0 && o(c, d, a) * o(c, d, b) < 0;
+      };
+      let maxSeg = 0;
+      let loops = 0;
+      let strands = 0;
+      for (const tt of [0, 1.7, 3.3]) {
+        for (const pts of t.strandGeometry(tt)) {
+          if (pts.length < 3) continue;
+          strands++;
+          for (let i = 1; i < pts.length - 1; i++) maxSeg = Math.max(maxSeg, Math.hypot(pts[i]!.x - pts[i - 1]!.x, pts[i]!.y - pts[i - 1]!.y));
+          // a visible strand must never cross itself (that is what drew the closed "chain links")
+          for (let i = 1; i < pts.length; i++) {
+            if (pts[i]!.w < 0.02) continue;
+            for (let j = i + 2; j < pts.length; j++) if (pts[j]!.w >= 0.02 && cross(pts[i - 1]!, pts[i]!, pts[j - 1]!, pts[j]!)) loops++;
+          }
+        }
+      }
+      return { maxSeg, loops, strands };
+    });
+    expect(r.strands).toBeGreaterThan(0);
+    expect(r.maxSeg).toBeLessThanOrEqual(2.5);
+    expect(r.loops).toBe(0);
+  });
+}
+
+test("dashboard goal moment: the hero keeps the pre-goal label, chip and streak until ignition", async ({ page }) => {
+  await page.setViewportSize({ width: 1180, height: 800 });
+  await page.goto(url({ view: "dashboard", preset: "goal-hit", theme: "dark" }));
+  await mock(page);
+  await page.waitForTimeout(500);
+  const before = (await page.getByTestId("hero-streak").textContent())!;
+  await page.evaluate(() => (window as unknown as { __tokenstreakMock: { triggerGoalReached: () => void } }).__tokenstreakMock.triggerGoalReached());
+  await page.waitForTimeout(300);
+  await expect(page.locator(".hero__lab")).toHaveText("Today’s light");
+  await expect(page.getByTestId("hero-progress")).not.toContainText("Lit");
+  await expect(page.getByTestId("hero-streak")).toHaveText(before);
+  await expect(page.locator(".hero__lab")).toHaveText("Goal lit today", { timeout: 3000 });
+  await expect(page.getByTestId("hero-progress")).toContainText("Lit");
+  await expect(page.getByTestId("hero-streak")).not.toHaveText(before);
+});
