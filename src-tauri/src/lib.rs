@@ -154,13 +154,16 @@ pub fn run() {
             std::process::exit(1);
         }
     };
-    app.run(|_app, event| {
+    app.run(|app, event| match event {
         // Keep running in the menu bar when every window is closed.
-        if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
-            if code.is_none() {
-                api.prevent_exit();
+        tauri::RunEvent::ExitRequested { api, code: None, .. } => api.prevent_exit(),
+        // The parse cache is written lazily while agents write; flush it.
+        tauri::RunEvent::Exit => {
+            if let Some(core) = app.try_state::<worker::Core>() {
+                core.engine.lock().persist();
             }
         }
+        _ => {}
     });
 }
 
