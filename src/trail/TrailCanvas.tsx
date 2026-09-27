@@ -9,7 +9,7 @@
 import { useEffect, useRef } from "react";
 import "../styles/trail.css";
 import { Trail } from "./Trail";
-import type { TrailData, TrailHover, TrailLayout, TrailTheme, TrailVariant } from "./types";
+import type { TrailData, TrailHover, TrailLayout, TrailLayoutInfo, TrailTheme, TrailVariant } from "./types";
 
 export interface TrailCanvasProps {
   data: TrailData | null;
@@ -31,6 +31,8 @@ export interface TrailCanvasProps {
   keyboard?: boolean;
   /** During a reveal: the share of history tokens the light has drawn (0..1). */
   onRevealProgress?: (p: number) => void;
+  /** After each layout: what the Trail shows (for a legend that tells the truth). */
+  onLayout?: (info: TrailLayoutInfo) => void;
   /** Measure `[data-trail-avoid]` HUD elements and route around them (default true). */
   avoidHud?: boolean;
 }
@@ -61,6 +63,8 @@ export function TrailCanvas(p: TrailCanvasProps) {
   hoverCb.current = p.onHover;
   const revealCb = useRef(p.onRevealProgress);
   revealCb.current = p.onRevealProgress;
+  const layoutCb = useRef(p.onLayout);
+  layoutCb.current = p.onLayout;
   const avoidHud = p.avoidHud ?? true;
   const layoutKey = JSON.stringify(p.layout ?? {});
 
@@ -71,6 +75,7 @@ export function TrailCanvas(p: TrailCanvasProps) {
     engine.current = t;
     const off = t.onHover((h) => hoverCb.current?.(h));
     t.onReveal((x) => revealCb.current?.(x));
+    t.onLayout((info) => layoutCb.current?.(info));
     // HUD safe zones
     const host = c.parentElement;
     let measureRaf = 0;

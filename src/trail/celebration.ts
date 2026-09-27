@@ -1,14 +1,16 @@
 // The goal-hit moment as one choreography across the canvas and the HUD.
 //
 //   T0 (celebration arrives, popover visible)
-//   +0      the streak digit still shows yesterday's count; the hero count-up lands
-//   +650    ignition: the Trail's shockwave, burst and sky flash, then the roll
-//           call races back along the streak (Trail.celebrate)
-//   +780    the hero number springs to 1.07 and settles
-//   +930    the streak digit rolls from n-1 to n; the pill glints
-//   +1030   a shimmer sweeps along the progress bar
-//   +1330   the toast
-//   +4400   the toast leaves; the celebration is acknowledged
+//   +0      the streak digit still shows yesterday's count; the hero counts up
+//           (900 ms) with the pre-goal label, meta and bar
+//   +920    the count lands on the goal: the label, meta and bar swap to "lit"
+//           together with the ignition (shockwave, burst, sky flash), then the
+//           roll call races back along the streak (Trail.celebrate)
+//   +1050   the hero number springs to 1.07 and settles
+//   +1200   the streak digit rolls from n-1 to n; the pill glints
+//   +1300   a shimmer sweeps along the progress bar
+//   +1600   the toast
+//   +4700   the toast leaves; the celebration is acknowledged
 //
 // Reduced motion: no transforms; the Trail glows, the toast shows at once.
 // DOM targets are found by role, so the views only need to mark nothing extra:
@@ -17,7 +19,7 @@
 
 import { useEffect, useRef, useState, type RefObject } from "react";
 
-export const GOAL_TIMELINE = { ignite: 650, hero: 780, roll: 930, glint: 930, sweep: 1030, toast: 1330, done: 4400 } as const;
+export const GOAL_TIMELINE = { ignite: 920, hero: 1050, roll: 1200, glint: 1200, sweep: 1300, toast: 1600, done: 4700 } as const;
 
 export interface GoalMomentInput {
   /** A pending celebration (streak including today). Null when there is none. */

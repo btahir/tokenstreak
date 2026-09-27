@@ -15,7 +15,7 @@ const arg = (name, def) => {
 const base = arg("--url", "http://127.0.0.1:5173");
 const engine = arg("--engine", "chromium");
 const out = `${arg("--out", "shots/trail")}/${engine}`;
-const only = arg("--only", "popover,hero,lab,reveal,goal,cards,tip").split(",");
+const only = arg("--only", "popover,hero,afteronb,lab,reveal,goal,cards,tip").split(",");
 const themes = arg("--themes", "light,dark").split(",");
 const heroPresets = arg("--presets", "sparse,streak-30,heavy-multi-tool,goal-hit,streak-at-risk,long-history").split(",");
 mkdirSync(out, { recursive: true });
@@ -57,6 +57,19 @@ for (const theme of themes) {
           await page.getByTestId("hero").screenshot({ path: f });
           log(f);
         }
+
+  if (want("afteronb")) {
+    // the first dashboard a new user sees: finish onboarding on first-run-reveal
+    for (const w of [1180, 900]) {
+      await go({ view: "dashboard", preset: "first-run-reveal", step: "3" }, { width: w, height: 800 }, 900);
+      await page.getByTestId("onb-start").click();
+      await page.getByTestId("hero").waitFor({ timeout: 15_000 });
+      await page.waitForTimeout(1200);
+      const f = `${out}/afteronb-${w}-${theme}.png`;
+      await page.getByTestId("hero").screenshot({ path: f });
+      log(f);
+    }
+  }
 
   if (want("tip")) {
     await go({ view: "dashboard", preset: "heavy-multi-tool" }, { width: 1180, height: 800 }, 900);

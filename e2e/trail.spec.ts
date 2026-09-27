@@ -79,19 +79,46 @@ test("dashboard hero at the minimum window width keeps labels apart", async ({ p
   for (let i = 0; i < vis.length; i++) for (let j = i + 1; j < vis.length; j++) expect(Math.hypot(vis[i]!.x - vis[j]!.x, vis[i]!.y - vis[j]!.y)).toBeGreaterThanOrEqual(56);
 });
 
-test("3+ years in the All range aggregate to weekly points or coarser", async ({ page }) => {
+test("3+ years in the All range: history compressed and smooth, the current run keeps a quarter of the width", async ({ page }) => {
   await page.setViewportSize({ width: 1180, height: 800 });
   await page.goto(url({ view: "dashboard", preset: "long-history" }));
   await mock(page);
   await page.getByRole("radio", { name: "All", exact: true }).click();
   const { geo } = await layoutOf(page, "trail-full");
-  expect(geo.lod).toBeGreaterThanOrEqual(7);
-  expect(geo.points.length).toBeLessThan(260);
-  // smooth: no point-to-point jumps steeper than the step
+  expect(geo.points.length).toBeLessThan(400);
   const pts = geo.points;
   let worst = 0;
   for (let i = 1; i < pts.length; i++) worst = Math.max(worst, Math.abs(pts[i]!.y - pts[i - 1]!.y) / Math.max(1, pts[i]!.x - pts[i - 1]!.x));
   expect(worst).toBeLessThan(1.2);
+  const width = await page.getByTestId("trail-full").evaluate((c) => c.clientWidth);
+  const firstCur = pts.find((p) => p.role === "current")!;
+  expect((geo.head.x - firstCur.x) / width).toBeGreaterThan(0.2);
+  await expect(page.getByTestId("trail-legend-note")).toContainText("older history compressed");
+});
+
+test("zero days are visible breaks at 40-120 visible days, and the legend says so", async ({ page }) => {
+  await page.setViewportSize({ width: 1180, height: 800 });
+  await page.goto(url({ view: "dashboard", preset: "streak-30" }));
+  await mock(page);
+  const { geo } = await layoutOf(page, "trail-full");
+  const gaps = geo.points.filter((p) => p.role === "gap");
+  expect(gaps.length).toBeGreaterThan(5);
+  await expect(page.getByTestId("trail-legend-note")).toContainText("gaps = days off");
+  // history days with tokens are part of the ribbon: at least 2.5 px wide
+  for (const p of geo.points) if (p.role !== "gap") expect(p.wd).toBeGreaterThanOrEqual(2.4);
+});
+
+test("the tooltip dates the current streak from its real start", async ({ page }) => {
+  await page.setViewportSize({ width: 1180, height: 800 });
+  await page.goto(url({ view: "dashboard", preset: "heavy-multi-tool" }));
+  await mock(page);
+  const start = await page.evaluate(() => (window as unknown as { __tokenstreakMock: { snapshot: () => { streak: { currentStart: string } } } }).__tokenstreakMock.snapshot().streak.currentStart);
+  await page.getByTestId("trail-full").focus();
+  await page.keyboard.press("End");
+  const tip = page.getByTestId("trail-tip-run");
+  await expect(tip).toBeVisible();
+  const label = await page.evaluate((d) => new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(`${d}T12:00:00Z`)), start);
+  await expect(tip).toContainText(label);
 });
 
 for (const preset of ["streak-at-risk", "heavy-multi-tool", "sparse", "goal-hit"]) {
@@ -162,9 +189,11 @@ test("goal moment: ignition, then the streak digit rolls, then the toast", async
   await page.waitForTimeout(400);
   const before = (await page.getByTestId("streak-pill").locator("b").textContent())!.trim();
   await page.evaluate(() => (window as unknown as { __tokenstreakMock: { triggerGoalReached: () => void } }).__tokenstreakMock.triggerGoalReached());
-  // while the count-up lands, yesterday's count is still what you see
+  // while the count-up lands, yesterday's count and the pre-goal label are still what you see
   await page.waitForTimeout(250);
   await expect(page.locator(".ts-roll-old")).toHaveText(before);
+  await expect(page.locator(".hero-lab")).not.toContainText("Goal lit");
+  await expect(page.getByTestId("progress-meta")).toContainText("to light");
   await expect(page.getByTestId("goal-toast")).toBeHidden();
   await expect(page.getByTestId("goal-toast")).toBeVisible({ timeout: 3000 });
   await expect(page.locator(".ts-roll-old")).toHaveCount(0);

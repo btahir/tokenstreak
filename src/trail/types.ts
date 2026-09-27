@@ -26,7 +26,8 @@ export interface TrailData {
   /** Daily goal in force today. */
   goal: number;
   today: { tokens: number; tools: ToolShares; cacheShare: number; date?: string };
-  streak: { current: number; best: number };
+  /** `start`: first day of the current streak (YYYY-MM-DD), for tooltips. */
+  streak: { current: number; best: number; start?: string | null };
   /** Oldest to newest, excluding today, one entry per local day (gaps filled with tokens: 0). */
   history: TrailDay[];
 }
@@ -60,6 +61,10 @@ export interface TrailLayout {
   climb?: number;
   /** Draw every day with tokens at full ribbon brightness (cards about something other than the streak). */
   emphasizeAll?: boolean;
+  /** Highest point of the hills' ridge, as a fraction of the height (cards keep text off the ridge). */
+  hillTop?: number;
+  /** Rectangles kept free of stars (text sits there). */
+  starFree?: { x: number; y: number; w: number; h: number }[];
   /** Fixed HUD rectangles (CSS px) the path routes around, in addition to `setAvoid()`. */
   avoid?: { x: number; y: number; w: number; h: number }[];
 }
@@ -106,4 +111,14 @@ export interface TrailStats {
   /** Time of the last cache rebuild (ms). */
   cacheMs: number;
   frames: number;
+}
+
+/** What the laid-out Trail shows (so the legend can describe it truthfully). */
+export interface TrailLayoutInfo {
+  /** Every day with no tokens is drawn as its own visible break. */
+  everyGapVisible: boolean;
+  /** Days per point (1 = one point per day). */
+  lod: number;
+  /** Older history is compressed to give the current run room. */
+  compressed: boolean;
 }

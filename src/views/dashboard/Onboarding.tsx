@@ -218,7 +218,7 @@ function Reveal({ snap, goal, next }: { snap: AppSnapshot; goal: number; next: (
           )}
         </div>
         <div className="onb__cta">
-          <span>Each stretch of light is a run of good days. Gaps are days off.</span>
+          <span className="onb__caption">Brighter stretches are goal days. Gaps are days with no tokens.</span>
           <button type="button" className="btn btn--glow btn--lg" onClick={next} data-testid="onb-next">
             Set my goal
           </button>

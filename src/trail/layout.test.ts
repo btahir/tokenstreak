@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  axisDay,
+  axisX,
+  makeAxis,
   bucketDays,
   classify,
   clusterRects,
@@ -223,5 +226,30 @@ describe("tooltip placement", () => {
     expect(placeTip(5, 200, 180, 80, 900, 300).left).toBeGreaterThanOrEqual(8);
     const r = placeTip(895, 200, 180, 80, 900, 300);
     expect(r.left + 180).toBeLessThanOrEqual(892);
+  });
+});
+
+describe("piecewise time axis (long views)", () => {
+  it("stays linear up to a year, or when the current run already has room", () => {
+    expect(makeAxis(300, 0, 1000, 250).split).toBe(0);
+    expect(makeAxis(1200, 0, 1000, 800).split).toBe(0); // the run already spans a third
+  });
+  it("gives the current run plus its lead-in at least a quarter of the width", () => {
+    const a = makeAxis(1281, 20, 1060, 1281 - 64 - 14);
+    expect(a.split).toBe(1281 - 64 - 14);
+    const runStart = axisX(a, 1281 - 64);
+    expect((1060 - axisX(a, a.split)) / (1060 - 20)).toBeCloseTo(0.25, 5);
+    expect(runStart).toBeLessThan(1060 - 0.2 * 1040);
+    // continuous and monotonic across the split, and axisDay inverts axisX
+    for (const i of [0, 500, a.split - 1, a.split, a.split + 1, 1280]) expect(axisDay(a, axisX(a, i))).toBeCloseTo(i, 6);
+    expect(axisX(a, a.split) - axisX(a, a.split - 1)).toBeLessThan(axisX(a, a.split + 1) - axisX(a, a.split));
+  });
+  it("buckets the compressed part coarser than the zoomed-in part", () => {
+    const d = days("L".repeat(40) + "T");
+    const b = bucketDays(d, GOAL, 7, { at: 30, b: 1 });
+    // days 30..39 one per point, today alone, days 0..29 in weeks (aligned to the split)
+    expect(b.filter((x) => x.i0 >= 30).length).toBe(11);
+    expect(b[0]!.i1 - b[0]!.i0 + 1).toBeLessThanOrEqual(7);
+    expect(b.slice(0, -11).every((x) => x.i1 < 30)).toBe(true);
   });
 });

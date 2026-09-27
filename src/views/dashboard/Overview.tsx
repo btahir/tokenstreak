@@ -28,13 +28,13 @@ import { useAppState, useBreakdown } from "../../state/store";
 import { TrailCanvas } from "../../trail/TrailCanvas";
 import { TrailTip } from "../../trail/TrailTip";
 import { useGoalMoment } from "../../trail/celebration";
-import type { TrailHover } from "../../trail/types";
+import type { TrailHover, TrailLayoutInfo } from "../../trail/types";
 import type { Route } from "../route";
 import { PageHead } from "./PageHead";
 
 type Range = "week" | "month" | "year" | "all";
 const RANGE_KIND: Record<Range, RangeKind> = { week: "last7", month: "last30", year: "thisYear", all: "all" };
-const RANGE_LABEL: Record<Range, string> = { week: "last 7 days", month: "last 30 days", year: "this year", all: "all time" };
+const RANGE_LABEL: Record<Range, string> = { week: "last 7 days", month: "last 30 days", year: "year to date", all: "all time" };
 const RANGE_DAYS: Record<Range, number> = { week: 21, month: 45, year: 365, all: 2000 };
 
 export function Overview({ snap, onShare, go }: { snap: AppSnapshot; onShare: () => void; go: (r: Route) => void }) {
@@ -84,6 +84,7 @@ function Hero({ snap, maxDays }: { snap: AppSnapshot; maxDays: number }) {
   const reduced = useReducedMotion();
   const celebration = useAppState((s) => s.celebration);
   const [hover, setHover] = useState<TrailHover | null>(null);
+  const [shows, setShows] = useState<TrailLayoutInfo | null>(null);
   const data = useMemo(() => buildTrailData(snap, { maxDays }), [snap, maxDays]);
   const t = snap.today;
   const tier = tierInfo(snap.streak.current);
@@ -103,6 +104,7 @@ function Hero({ snap, maxDays }: { snap: AppSnapshot; maxDays: number }) {
         reducedMotion={reduced}
         celebrateKey={celebrateKey}
         onHover={setHover}
+        onLayout={setShows}
         keyboard
         ariaLabel={`${trailSummary(snap)}. Use the arrow keys to step through days.`}
       />
@@ -138,7 +140,11 @@ function Hero({ snap, maxDays }: { snap: AppSnapshot; maxDays: number }) {
           <Glyph tool="gemini" />
           Gemini
         </span>
-        <span className="hero__legend-note">Width = tokens · breaks = missed days</span>
+        <span className="hero__legend-note" data-testid="trail-legend-note">
+          {/* describe what is drawn: breaks only when every day off is its own visible gap */}
+          {shows && !shows.everyGapVisible ? "Width = tokens · bright = goal days" : "Width = tokens · gaps = days off"}
+          {shows?.compressed ? " · older history compressed" : ""}
+        </span>
       </div>
       {hover && <TrailTip hover={hover} />}
     </section>
@@ -340,7 +346,7 @@ function Breakdowns({ b, range }: { b: Breakdown | null; range: Range }) {
       <Card title="By project" action={<span className="card__sub">Stays on this Mac</span>}>
         <RankList
           testId="by-project"
-          rows={projects.map((s, i) => ({ key: s.key, label: s.label, value: s.share, display: formatPercent(s.share), color: "var(--ink-3)", opacity: 0.85 - i * 0.12, mono: true, title: s.label }))}
+          rows={projects.map((s, i) => ({ key: s.key, label: s.label, value: s.share, display: formatPercent(s.share), color: "var(--ink-3)", opacity: 0.85 - i * 0.12, title: s.label }))}
         />
         <div className="note">
           <IconLock size={13} />
@@ -354,6 +360,11 @@ function Breakdowns({ b, range }: { b: Breakdown | null; range: Range }) {
 }
 
 /* ---------------- achievements ---------------- */
+
+/** "NEW" only for the first 14 days after an unlock. */
+function freshNew<T extends { isNew: boolean; unlockedAt: string | null }>(a: T, today: string): T {
+  return a.isNew && a.unlockedAt && a.unlockedAt.slice(0, 10) < addDays(today, -14) ? { ...a, isNew: false } : a;
+}
 
 function RecentAchievements({ snap, go }: { snap: AppSnapshot; go: (r: Route) => void }) {
   // unlocked only, newest first; the last 90 days lead, older ones sit under "Earlier"
@@ -374,8 +385,8 @@ function RecentAchievements({ snap, go }: { snap: AppSnapshot; go: (r: Route) =>
       <div className="badges-row" data-testid="recent-achievements">
         {shown.map((a, i) => (
           <Fragment key={a.id}>
-            {i === firstOld && <div className="badges-row__sep">Earlier</div>}
-            <Badge a={a} size={72} compact meta={formatDate(a.unlockedAt!)} />
+            {i === firstOld && i > 0 && <div className="badges-row__sep">Earlier</div>}
+            <Badge a={freshNew(a, snap.today.date)} size={72} compact meta={formatDate(a.unlockedAt!)} />
           </Fragment>
         ))}
         {!shown.length && <div className="note">Your first badge arrives with your first goal day.</div>}

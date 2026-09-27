@@ -110,11 +110,17 @@ function PopoverMain({ snap }: { snap: AppSnapshot }) {
   const cacheDelta = cacheDeltaCopy(tiles.cacheDeltaPts);
   const lean = leanCopy(tiles.leaner, formatChange);
   const mood = streakMood(snap);
-  const copy = progressCopy(t);
   const heroValue = useCountUp(t.tokens.total, 900);
+  // the day is shown lit only once the counting number reaches the goal, so the label,
+  // the meta line and the bar never run ahead of the number (they swap with the ignition)
+  const shownMet = t.met && t.goal > 0 && heroValue >= t.goal;
+  const shown = heroValue === t.tokens.total && shownMet === t.met
+    ? t
+    : { ...t, tokens: { ...t.tokens, total: heroValue }, progress: t.goal > 0 ? heroValue / t.goal : 0, met: shownMet, remaining: Math.max(0, t.goal - heroValue) };
+  const copy = progressCopy(shown);
   const [heroNum, heroUnit] = splitUnit(formatTowardGoal(heroValue, t.goal));
   const onDark = theme === "dark";
-  const lit = t.met;
+  const lit = shownMet;
 
   const refresh = useCallback(async () => {
     if (!api || refreshing) return;
@@ -204,7 +210,7 @@ function PopoverMain({ snap }: { snap: AppSnapshot }) {
       </div>
 
       <div className="pbody">
-        <Progress value={t.progress} lit={lit} label="Today’s goal" />
+        <Progress value={shown.progress} lit={lit} label="Today’s goal" />
         <div className="meta" data-testid="progress-meta">
           <span>
             {copy.lead && <b>{copy.lead}</b>} {copy.rest}
@@ -216,7 +222,7 @@ function PopoverMain({ snap }: { snap: AppSnapshot }) {
           <Tile label="Est. cost" value={formatUsd(tiles.cost)}>
             {tiles.usualCost !== null ? <span className="tile__sub">usual day {formatUsd(tiles.usualCost, { cents: tiles.usualCost < 10 })}</span> : <span className="tile__hint">estimate</span>}
           </Tile>
-          <Tile label="From cache" value={percentValue(tiles.cacheShare)} unit="%">
+          <Tile label="From cache" value={t.tokens.total > 0 ? percentValue(tiles.cacheShare) : "—"} unit={t.tokens.total > 0 ? "%" : undefined}>
             {cacheDelta ? (
               <Delta lean>
                 <IconArrow size={10} dir={tiles.cacheDeltaPts! > 0 ? "up" : "down"} /> {cacheDelta}

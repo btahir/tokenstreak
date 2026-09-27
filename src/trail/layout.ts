@@ -74,7 +74,7 @@ export function dayKind(d: DayIn): Kind {
  * Aggregates days into buckets of `b` days, aligned to the newest day. Today
  * (the last day) always stays its own bucket so the head is exact.
  */
-export function bucketDays(days: DayIn[], goal: number, b: number): Bucket[] {
+export function bucketDays(days: DayIn[], goal: number, b: number, split?: { at: number; b: number }): Bucket[] {
   const n = days.length;
   const g = goal > 0 ? goal : 1;
   const one = (i0: number, i1: number): Bucket => {
@@ -110,10 +110,47 @@ export function bucketDays(days: DayIn[], goal: number, b: number): Bucket[] {
     return { i0, i1, tokens: tokens / m, ratio: ratio / m, kind, tools, cache: tokens > 0 ? cache / tokens : 0, lit };
   };
   if (!n) return [];
-  if (b <= 1) return days.map((_, i) => one(i, i));
+  // with `split`, days from `split.at` on (the recent, zoomed-in part) use `split.b`
+  const at = split ? clamp(split.at, 0, n - 1) : 0;
+  const bF = split ? Math.max(1, split.b) : b;
+  if (b <= 1 && bF <= 1) return days.map((_, i) => one(i, i));
   const out: Bucket[] = [one(n - 1, n - 1)];
-  for (let end = n - 2; end >= 0; end -= b) out.push(one(Math.max(0, end - b + 1), end));
+  let end = n - 2;
+  for (; end >= at && split; end -= bF) out.push(one(Math.max(at, end - bF + 1), end));
+  for (; end >= 0; end -= Math.max(1, b)) out.push(one(Math.max(0, end - Math.max(1, b) + 1), end));
   return out.reverse();
+}
+
+/**
+ * Piecewise time axis for long views: the current run plus a lead-in gets at
+ * least `share` of the width; older history is compressed. Linear otherwise.
+ */
+export interface Axis {
+  x0: number;
+  x1: number;
+  /** First day of the zoomed-in part (0 = linear axis). */
+  split: number;
+  xSplit: number;
+  stepOld: number;
+  stepNew: number;
+}
+export function makeAxis(n: number, x0: number, x1: number, focusFrom: number | null, share = 0.25, minDays = 366): Axis {
+  const lin = (): Axis => {
+    const st = n > 1 ? (x1 - x0) / (n - 1) : 0;
+    return { x0, x1, split: 0, xSplit: x0, stepOld: st, stepNew: st };
+  };
+  if (n < minDays || focusFrom === null || focusFrom <= 0) return lin();
+  const natural = (n - 1 - focusFrom) / (n - 1);
+  if (natural >= share) return lin();
+  const xSplit = x1 - share * (x1 - x0);
+  return { x0, x1, split: focusFrom, xSplit, stepOld: (xSplit - x0) / focusFrom, stepNew: (x1 - xSplit) / Math.max(1, n - 1 - focusFrom) };
+}
+export function axisX(a: Axis, i: number): number {
+  return i < a.split ? a.x0 + i * a.stepOld : a.xSplit + (i - a.split) * a.stepNew;
+}
+export function axisDay(a: Axis, x: number): number {
+  if (a.split > 0 && x < a.xSplit) return (x - a.x0) / (a.stepOld || 1);
+  return a.split + (x - a.xSplit) / (a.stepNew || 1);
 }
 
 /**

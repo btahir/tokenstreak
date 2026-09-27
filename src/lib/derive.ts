@@ -81,7 +81,7 @@ export function buildTrailData(snap: AppSnapshot, opts: TrailBuildOptions = {}):
   return {
     goal,
     today: { tokens: today.tokens.total, tools: todayTools(today), cacheShare: cacheShareOf(today.tokens), date: today.date },
-    streak: { current: snap.streak.current, best: snap.streak.longest },
+    streak: { current: snap.streak.current, best: snap.streak.longest, start: snap.streak.currentStart ?? null },
     history,
   };
 }
