@@ -2,7 +2,7 @@
 // Trail frame cost in Chromium and WebKit against a built web bundle (pnpm build:web && pnpm preview:web):
 // popover idle, popover during the goal moment, and the dashboard with 3.5 years in the All range.
 import { chromium, webkit } from "playwright";
-const base = "http://127.0.0.1:4173";
+const base = process.argv[2] ?? "http://127.0.0.1:4173";
 const out = {};
 for (const [name, eng] of [["chromium", chromium], ["webkit", webkit]]) {
   const b = await eng.launch();

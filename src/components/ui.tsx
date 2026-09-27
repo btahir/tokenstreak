@@ -100,7 +100,8 @@ export type StreakTone = "lit" | "risk" | "frozen" | "rest" | "none";
 export function StreakPill({ days, tone = "lit", children, sub, onDark }: { days: number | null; tone?: StreakTone; children?: ReactNode; sub?: ReactNode; onDark?: boolean }) {
   const raw = children ?? "day streak";
   // "9-day streak": the unit hugs the number with a hyphen, like everywhere else
-  const hug = days !== null && typeof raw === "string" && raw.startsWith("day");
+  // (the stacked pill sets the number as a badge beside two lines, so no hyphen there)
+  const hug = days !== null && !sub && typeof raw === "string" && raw.startsWith("day");
   const label = hug ? `-${raw}` : raw;
   return (
     <span className={`streak streak--${tone}${sub ? " streak--stack" : ""}`} data-testid="streak-pill">
@@ -109,7 +110,7 @@ export function StreakPill({ days, tone = "lit", children, sub, onDark }: { days
       </span>
       {days !== null && <b>{days.toLocaleString("en-US")}</b>}
       {sub ? (
-        <span className={`streak__lines${hug ? " streak__hug" : ""}`}>
+        <span className="streak__lines">
           <span>{label}</span>
           <small>{sub}</small>
         </span>
