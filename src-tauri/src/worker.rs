@@ -1,6 +1,7 @@
 //! Background worker: owns refresh scheduling (file watcher, fallback poll,
-//! midnight rollover), detects goal-reached and achievement moments, and
-//! pushes snapshots to the windows and the tray.
+//! midnight rollover, wake from sleep, clock and time-zone changes), streams
+//! the first scan's partial results, sends notifications, and pushes
+//! snapshots to the windows and the tray.
 
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
@@ -9,9 +10,10 @@ use std::time::{Duration, Instant};
 use parking_lot::{Mutex, RwLock};
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
-use tokenstreak_core::api::{Achievement, AppSnapshot};
-use tokenstreak_core::engine::Engine;
+use tokenstreak_core::api::{Achievement, AppSnapshot, Settings};
+use tokenstreak_core::engine::{parse_records, Engine};
 
+use crate::system::SystemEvent;
 use crate::tray;
 
 /// Messages for the worker thread.
@@ -24,6 +26,8 @@ pub enum Msg {
     SettingsChanged,
     /// Re-emit the snapshot without scanning (after acknowledgements).
     Publish,
+    /// Woke from sleep, or the clock / time zone changed.
+    System(SystemEvent),
 }
 
 /// Shared state managed by Tauri.
@@ -43,14 +47,15 @@ impl Core {
     }
 }
 
-/// Fallback poll so updates land within 60 s even if an FS event is missed.
+/// Fallback poll so updates land within 60 s even if an FS event is missed,
+/// and so log folders created after launch are discovered.
 const POLL: Duration = Duration::from_secs(45);
 const DEBOUNCE: Duration = Duration::from_millis(1500);
 /// While an agent is writing continuously, rescan at most this often
 /// (each rescan costs ~30 ms; this keeps active-use CPU well under 1%).
 const MIN_GAP: Duration = Duration::from_secs(8);
 
-pub fn start(app: &AppHandle, engine: Engine) -> Core {
+pub fn start(app: &AppHandle, engine: Engine) -> std::io::Result<Core> {
     let (tx, rx) = channel::<Msg>();
     let first = Arc::new(engine.snapshot());
     let core = Core {
@@ -61,11 +66,8 @@ pub fn start(app: &AppHandle, engine: Engine) -> Core {
     let engine = core.engine.clone();
     let latest = core.latest.clone();
     let handle = app.clone();
-    std::thread::Builder::new()
-        .name("tokenstreak-worker".into())
-        .spawn(move || run(handle, engine, latest, rx, tx))
-        .expect("spawn worker");
-    core
+    std::thread::Builder::new().name("tokenstreak-worker".into()).spawn(move || run(handle, engine, latest, rx, tx))?;
+    Ok(core)
 }
 
 fn run(
@@ -76,13 +78,15 @@ fn run(
     tx: Sender<Msg>,
 ) {
     let mut watcher = start_watcher(&engine, &tx);
-    // First full (incremental) scan right away; the cached snapshot is already on screen.
+    if engine.lock().wants_progressive_scan() {
+        initial_scan(&app, &engine, &latest);
+    }
+    // Then a normal incremental scan right away; the cached snapshot is already on screen.
     let mut pending_reply: Vec<Sender<AppSnapshot>> = Vec::new();
     let mut needs_scan = true;
     // File changes seen since the last scan (rate-limited by MIN_GAP).
     let mut dirty = false;
-    let mut last_scan = Instant::now() - MIN_GAP;
-    let mut last_day = latest.read().today.date.clone();
+    let mut last_scan = Instant::now().checked_sub(MIN_GAP).unwrap_or_else(Instant::now);
     loop {
         if dirty && last_scan.elapsed() >= MIN_GAP {
             needs_scan = true;
@@ -92,114 +96,175 @@ fn run(
             dirty = false;
             last_scan = Instant::now();
             let t = Instant::now();
-            let (snap, fresh) = {
+            let (snap, fresh, settings, roots) = {
                 let mut e = engine.lock();
                 let report = e.refresh();
                 e.set_watching(watcher.is_some());
                 let fresh = e.sync_unlocks();
                 e.persist();
-                tracing::info!(
-                    files = report.files,
-                    appended = report.appended,
-                    reparsed = report.reparsed,
-                    ms = t.elapsed().as_millis() as u64,
-                    "scan"
-                );
-                (e.snapshot(), fresh)
+                if report.changed() {
+                    tracing::info!(
+                        files = report.files,
+                        appended = report.appended,
+                        reparsed = report.reparsed,
+                        ms = t.elapsed().as_millis() as u64,
+                        "scan"
+                    );
+                } else {
+                    tracing::debug!(files = report.files, ms = t.elapsed().as_millis() as u64, "scan (no changes)");
+                }
+                (e.snapshot(), fresh, e.settings().clone(), e.watch_roots())
             };
-            let settings = engine.lock().settings().clone();
-            publish(&app, &latest, snap.clone(), fresh, &settings);
+            // Log folders that appeared (or vanished) since the watcher started.
+            let watched = watcher.as_ref().map(|w| w.watched.clone()).unwrap_or_default();
+            if roots != watched {
+                tracing::info!(roots = roots.len(), "log folders changed; restarting watcher");
+                watcher = start_watcher(&engine, &tx);
+            }
+            publish(&app, &engine, &latest, snap.clone(), fresh, &settings);
             for r in pending_reply.drain(..) {
                 let _ = r.send(snap.clone());
             }
-            last_day = snap.today.date.clone();
         }
-        // Wake at the earliest of: the rate-limited rescan, the poll interval, local midnight.
+        // Wake at the earliest of: the rate-limited rescan, the poll interval,
+        // local midnight, and the streak-at-risk reminder.
         let wait = {
             let e = engine.lock();
             let until_midnight = e.clock().ms_until_next_midnight(e.now_ms()).max(1000) as u64;
             let mut w = POLL.min(Duration::from_millis(until_midnight + 500));
+            if let Some(ms) = e.ms_until_reminder(&latest.read()) {
+                w = w.min(Duration::from_millis(ms.max(0) as u64 + 500));
+            }
             if dirty {
                 w = w.min(MIN_GAP.saturating_sub(last_scan.elapsed()));
             }
             w
         };
-        match rx.recv_timeout(wait) {
-            Ok(Msg::FilesChanged) => dirty = true,
-            Ok(Msg::Refresh(reply)) => {
-                needs_scan = true;
-                if let Some(r) = reply {
-                    pending_reply.push(r);
-                }
+        let mut handle = |m: Msg, needs_scan: &mut bool, dirty: &mut bool, watcher: &mut Option<_>| match m {
+            Msg::FilesChanged => *dirty = true,
+            Msg::Refresh(reply) => {
+                *needs_scan = true;
+                pending_reply.extend(reply);
             }
-            Ok(Msg::SettingsChanged) => {
-                watcher = start_watcher(&engine, &tx);
-                needs_scan = true;
+            Msg::SettingsChanged => {
+                *watcher = start_watcher(&engine, &tx);
+                *needs_scan = true;
             }
-            Ok(Msg::Publish) => {
+            Msg::Publish => {
                 let (snap, settings) = {
                     let e = engine.lock();
                     (e.snapshot(), e.settings().clone())
                 };
-                publish(&app, &latest, snap, Vec::new(), &settings);
+                publish(&app, &engine, &latest, snap, Vec::new(), &settings);
             }
-            Err(RecvTimeoutError::Timeout) => {
-                needs_scan = !dirty || last_scan.elapsed() >= MIN_GAP;
-                let today = {
-                    let e = engine.lock();
-                    e.clock().date_of(e.now_ms()).to_string()
-                };
-                if today != last_day {
-                    tracing::info!("day rollover");
+            Msg::System(ev) => {
+                tracing::info!(event = ?ev, "system event");
+                engine.lock().check_system_timezone();
+                if ev == SystemEvent::Wake {
+                    // FSEvents can drop events across sleep; start clean.
+                    *watcher = start_watcher(&engine, &tx);
                 }
+                *needs_scan = true;
+            }
+        };
+        match rx.recv_timeout(wait) {
+            Ok(m) => handle(m, &mut needs_scan, &mut dirty, &mut watcher),
+            Err(RecvTimeoutError::Timeout) => {
+                // Poll, day rollover or reminder time: rescan (cheap when nothing changed).
+                engine.lock().check_system_timezone();
+                needs_scan = !dirty || last_scan.elapsed() >= MIN_GAP;
             }
             Err(RecvTimeoutError::Disconnected) => break,
         }
         // Coalesce bursts of messages.
         while let Ok(m) = rx.try_recv() {
-            match m {
-                Msg::FilesChanged => dirty = true,
-                Msg::Refresh(r) => {
-                    needs_scan = true;
-                    pending_reply.extend(r);
-                }
-                Msg::SettingsChanged => {
-                    watcher = start_watcher(&engine, &tx);
-                    needs_scan = true;
-                }
-                Msg::Publish => {}
-            }
+            handle(m, &mut needs_scan, &mut dirty, &mut watcher);
         }
     }
 }
 
+/// First launch (no cache): parse the most recent logs first and publish
+/// partial snapshots, so today and recent days appear within a second while
+/// older history streams in. The engine lock is released while parsing, so
+/// commands (breakdowns, settings) stay responsive.
+fn initial_scan(app: &AppHandle, engine: &Arc<Mutex<Engine>>, latest: &Arc<RwLock<Arc<AppSnapshot>>>) {
+    let t = Instant::now();
+    let mut plan = engine.lock().begin_progressive_scan();
+    let _ = app.emit("scan-progress", plan.progress("initial"));
+    let mut batches = 0u32;
+    while let Some(mut batch) = plan.next_batch() {
+        let report = parse_records(&mut batch);
+        batches += 1;
+        let partial = {
+            let mut e = engine.lock();
+            e.absorb_batch(&mut plan, batch, report);
+            (!plan.is_done()).then(|| (e.snapshot(), e.settings().clone()))
+        };
+        if let Some((snap, settings)) = partial {
+            if batches == 1 {
+                tracing::info!(ms = t.elapsed().as_millis() as u64, files = plan.files_done, "first partial snapshot");
+            }
+            tray::update(app, &snap, &settings);
+            let _ = app.emit("snapshot", &snap);
+            *latest.write() = Arc::new(snap);
+            let _ = app.emit("scan-progress", plan.progress("initial"));
+        }
+    }
+    let done = plan.progress("done");
+    let report = engine.lock().finish_progressive_scan(plan);
+    let _ = app.emit("scan-progress", done);
+    tracing::info!(
+        files = report.files,
+        mb = report.bytes_read / (1024 * 1024),
+        batches,
+        unreadable = report.unreadable,
+        ms = t.elapsed().as_millis() as u64,
+        "initial scan"
+    );
+}
+
 fn start_watcher(engine: &Arc<Mutex<Engine>>, tx: &Sender<Msg>) -> Option<tokenstreak_core::watch::Watcher> {
     let roots = engine.lock().watch_roots();
+    if roots.is_empty() {
+        return None;
+    }
     let (wtx, wrx) = channel::<()>();
     let fwd = tx.clone();
-    std::thread::spawn(move || {
+    let spawned = std::thread::Builder::new().name("tokenstreak-watch".into()).spawn(move || {
         while wrx.recv().is_ok() {
             if fwd.send(Msg::FilesChanged).is_err() {
                 break;
             }
         }
     });
+    if spawned.is_err() {
+        tracing::warn!("file watcher thread could not start; relying on the poll");
+        return None;
+    }
     match tokenstreak_core::watch::watch(&roots, DEBOUNCE, wtx) {
         Ok(w) => Some(w),
         Err(e) => {
-            tracing::warn!("file watcher unavailable: {e}");
+            tracing::warn!(error = %e, "file watcher unavailable; relying on the poll");
             None
         }
     }
 }
 
-/// Emits the snapshot, updates the tray and fires goal / achievement moments.
+fn notify(app: &AppHandle, title: &str, body: &str) {
+    if let Err(e) = app.notification().builder().title(title).body(body).show() {
+        tracing::warn!(error = %e, "notification failed");
+    }
+}
+
+/// Emits the snapshot, updates the tray, fires in-app moments and native
+/// notifications (rules in `tokenstreak_core::notify`).
 fn publish(
     app: &AppHandle,
+    engine: &Arc<Mutex<Engine>>,
     latest: &Arc<RwLock<Arc<AppSnapshot>>>,
     snap: AppSnapshot,
     fresh: Vec<Achievement>,
-    settings: &tokenstreak_core::api::Settings,
+    settings: &Settings,
 ) {
     let prev = latest.read().clone();
     let crossed = snap.today.met && !(prev.today.met && prev.today.date == snap.today.date);
@@ -208,23 +273,33 @@ fn publish(
     if crossed {
         if let Some(c) = &snap.celebration {
             let _ = app.emit("goal-reached", c);
-            if settings.notifications.goal_reached && snap.onboarding.completed {
-                let body = if c.streak > 1 {
-                    format!("{} tokens today. Your streak is now {} days.", human(c.tokens), c.streak)
-                } else {
-                    format!("{} tokens today. Streak started!", human(c.tokens))
-                };
-                let _ = app.notification().builder().title("Daily goal reached").body(body).show();
-            }
         }
     }
+    let (goal, at_risk, quiet) = {
+        let mut e = engine.lock();
+        (e.take_goal_notice(&snap), e.take_at_risk_notice(&snap), e.in_quiet_hours())
+    };
+    if let Some(n) = goal {
+        let body = if n.streak > 1 {
+            format!("{} tokens today. Your streak is now {} days.", human(n.tokens), n.streak)
+        } else {
+            format!("{} tokens today. Streak started!", human(n.tokens))
+        };
+        notify(app, "Daily goal reached", &body);
+    }
+    if let Some(n) = at_risk {
+        let title = format!("Your {}-day streak is at risk", n.streak);
+        let body = format!("{} more tokens today keeps it alive.", human(n.remaining));
+        notify(app, &title, &body);
+    }
     // Only achievements unlocked by live activity notify; the first-run reveal is shown in-app.
-    let live: Vec<Achievement> = fresh.into_iter().filter(|a| a.unlocked_at.as_deref() == Some(snap.today.date.as_str())).collect();
+    let live: Vec<Achievement> =
+        fresh.into_iter().filter(|a| a.unlocked_at.as_deref() == Some(snap.today.date.as_str())).collect();
     if !live.is_empty() && snap.onboarding.completed {
         let _ = app.emit("achievements-unlocked", &live);
-        if settings.notifications.achievements {
+        if settings.notifications.achievements && !quiet {
             for a in live.iter().take(2) {
-                let _ = app.notification().builder().title(format!("Achievement unlocked: {}", a.title)).body(&a.description).show();
+                notify(app, &format!("Achievement unlocked: {}", a.title), &a.description);
             }
         }
     }
@@ -241,5 +316,19 @@ pub fn human(n: u64) -> String {
         format!("{:.0}K", f / 1e3)
     } else {
         n.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::human;
+
+    #[test]
+    fn human_numbers() {
+        assert_eq!(human(0), "0");
+        assert_eq!(human(999), "999");
+        assert_eq!(human(12_345), "12K");
+        assert_eq!(human(4_200_000), "4.2M");
+        assert_eq!(human(6_100_000_000), "6.1B");
     }
 }

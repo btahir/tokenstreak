@@ -2,71 +2,124 @@
 //! `tokenstreak-core`.
 
 mod commands;
+mod logging;
+mod shortcut;
+mod system;
 mod tray;
 mod worker;
 
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_window_state::StateFlags;
 use tokenstreak_core::engine::Engine;
 
-pub fn run() {
-    // Logs carry counts and timings only (never log content), to stderr.
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("TOKENSTREAK_LOG").unwrap_or_else(|_| "info".into()),
-        )
-        .with_writer(std::io::stderr)
-        .try_init();
+/// Hands memory freed by a closed window back to the OS (the allocator
+/// otherwise keeps it cached).
+pub(crate) fn engine_release_memory(_app: &tauri::AppHandle) {
+    tokenstreak_core::engine::release_memory();
+}
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // A second launch (e.g. from Finder) opens the dashboard.
-            tray::show_dashboard(app);
+/// The dashboard remembers its size, position and zoom; the popover is
+/// positioned under the menu-bar icon every time instead.
+fn window_state_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    tauri_plugin_window_state::Builder::new()
+        .with_state_flags(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED)
+        .with_denylist(&["popover"])
+        .build()
+}
+
+fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    logging::init(app.path().app_log_dir().ok().as_deref());
+    tracing::info!(version = %app.package_info().version, "starting");
+
+    #[cfg(target_os = "macos")]
+    app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+    // `TOKENSTREAK_DATA_DIR` points the app at another data folder (QA,
+    // measurements, demos) without touching the real one.
+    let data_dir = match std::env::var_os("TOKENSTREAK_DATA_DIR").filter(|v| !v.is_empty()) {
+        Some(d) => std::path::PathBuf::from(d),
+        None => app.path().app_data_dir()?,
+    };
+    std::fs::create_dir_all(&data_dir)?;
+    // Opening restores the incremental cache, so the first snapshot is instant.
+    let engine = Engine::open(&data_dir);
+    let shortcut_setting = engine.settings().popover_shortcut.clone();
+    let core = worker::start(app.handle(), engine)?;
+    app.manage(core);
+    tray::create(app.handle())?;
+
+    if let Some(accel) = shortcut_setting.as_deref() {
+        if let Err(e) = shortcut::apply(app.handle(), Some(accel)) {
+            tracing::warn!(error = %e, "saved popover shortcut unavailable");
+        }
+    }
+
+    let handle = app.handle().clone();
+    system::observe(move |ev| {
+        use tauri::Manager as _;
+        handle.state::<worker::Core>().send(worker::Msg::System(ev));
+    });
+
+    // Popover: hide when it loses focus.
+    if let Some(w) = app.get_webview_window("popover") {
+        let handle = app.handle().clone();
+        w.on_window_event(move |e| match e {
+            WindowEvent::Focused(false) => tray::hide_popover(&handle),
+            WindowEvent::Focused(true) => tray::popover_focused(),
+            _ => {}
+        });
+    }
+    // First run: open the dashboard for onboarding.
+    let first_run = !app.state::<worker::Core>().snapshot().onboarding.completed;
+    if first_run {
+        tray::show_dashboard(app.handle());
+    }
+    Ok(())
+}
+
+#[derive(Debug, PartialEq)]
+enum Action {
+    Dashboard,
+    Popover,
+    Settings,
+    Refresh,
+    Quit,
+}
+
+fn second_launch_action(args: &[String]) -> Action {
+    for a in args.iter().skip(1) {
+        match a.as_str() {
+            "--popover" => return Action::Popover,
+            "--settings" => return Action::Settings,
+            "--refresh" => return Action::Refresh,
+            "--quit" => return Action::Quit,
+            "--dashboard" => return Action::Dashboard,
+            _ => {}
+        }
+    }
+    Action::Dashboard
+}
+
+pub fn run() {
+    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // A second launch opens the dashboard (e.g. from Finder), or does
+            // what its flag asks, so launchers and scripts can drive the app:
+            // `open -a Tokenstreak --args --popover | --settings | --refresh | --quit`.
+            match second_launch_action(&args) {
+                Action::Popover => tray::toggle_popover(app),
+                Action::Settings => tray::show_settings(app),
+                Action::Refresh => app.state::<worker::Core>().send(worker::Msg::Refresh(None)),
+                Action::Quit => app.exit(0),
+                Action::Dashboard => tray::show_dashboard(app),
+            }
         }))
-        .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
-        .setup(|app| {
-            #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-
-            let data_dir = app.path().app_data_dir()?;
-            std::fs::create_dir_all(&data_dir)?;
-            // Opening restores the incremental cache, so the first snapshot is instant.
-            let engine = Engine::open(&data_dir);
-            let core = worker::start(app.handle(), engine);
-            app.manage(core);
-            tray::create(app.handle())?;
-
-            // Popover: hide when it loses focus.
-            if let Some(w) = app.get_webview_window("popover") {
-                let handle = app.handle().clone();
-                w.on_window_event(move |e| {
-                    if let WindowEvent::Focused(false) = e {
-                        tray::hide_popover(&handle);
-                    }
-                });
-            }
-            // Dashboard: closing hides it and returns to a menu-bar-only app.
-            if let Some(w) = app.get_webview_window("dashboard") {
-                let handle = app.handle().clone();
-                let win = w.clone();
-                w.on_window_event(move |e| {
-                    if let WindowEvent::CloseRequested { api, .. } = e {
-                        api.prevent_close();
-                        let _ = win.hide();
-                        #[cfg(target_os = "macos")]
-                        let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
-                    }
-                });
-            }
-            // First run: open the dashboard for onboarding.
-            let first_run = !app.state::<worker::Core>().snapshot().onboarding.completed;
-            if first_run {
-                tray::show_dashboard(app.handle());
-            }
-            Ok(())
-        })
+        .plugin(window_state_plugin())
+        .plugin(shortcut::plugin())
+        .setup(setup)
         .invoke_handler(tauri::generate_handler![
             commands::get_snapshot,
             commands::get_breakdown,
@@ -82,20 +135,44 @@ pub fn run() {
             commands::acknowledge_achievements,
             commands::get_app_info,
             commands::open_dashboard,
+            commands::open_settings,
             commands::hide_popover,
             commands::set_popover_height,
             commands::quit_app,
             commands::open_external,
             commands::save_export,
+            commands::reveal_logs,
         ])
-        .build(tauri::generate_context!())
-        .expect("error while building Tokenstreak")
-        .run(|_app, event| {
-            // Keep running in the menu bar when every window is closed.
-            if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
-                if code.is_none() {
-                    api.prevent_exit();
-                }
+        .build(tauri::generate_context!());
+    let app = match app {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::error!(error = %e, "Tokenstreak failed to start");
+            eprintln!("Tokenstreak failed to start: {e}");
+            std::process::exit(1);
+        }
+    };
+    app.run(|_app, event| {
+        // Keep running in the menu bar when every window is closed.
+        if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+            if code.is_none() {
+                api.prevent_exit();
             }
-        });
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn second_launch_flags() {
+        let a = |v: &[&str]| second_launch_action(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(a(&["tokenstreak"]), Action::Dashboard);
+        assert_eq!(a(&["tokenstreak", "--popover"]), Action::Popover);
+        assert_eq!(a(&["tokenstreak", "-psn_0_123", "--settings"]), Action::Settings);
+        assert_eq!(a(&["tokenstreak", "--quit"]), Action::Quit);
+        assert_eq!(a(&["tokenstreak", "--refresh"]), Action::Refresh);
+    }
 }

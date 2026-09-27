@@ -9,8 +9,8 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 use tokenstreak_core::api::*;
 
-use crate::tray;
 use crate::worker::{Core, Msg};
+use crate::{shortcut, tray};
 
 type Res<T> = Result<T, String>;
 
@@ -30,14 +30,29 @@ pub fn get_settings(core: State<'_, Core>) -> Settings {
 }
 
 /// Deep-merges a partial settings object; returns the full settings.
+/// A new `popoverShortcut` is registered before it is saved, so an invalid
+/// or taken shortcut returns an error and leaves settings unchanged (`""`
+/// turns the shortcut off).
 #[tauri::command(async)]
-pub fn update_settings(app: AppHandle, core: State<'_, Core>, patch: serde_json::Value) -> Res<Settings> {
+pub fn update_settings(app: AppHandle, core: State<'_, Core>, mut patch: serde_json::Value) -> Res<Settings> {
+    if let Some(v) = patch.get_mut("popoverShortcut") {
+        if v.as_str().is_some_and(|s| s.trim().is_empty()) {
+            *v = serde_json::Value::Null;
+        }
+    }
     let before = core.engine.lock().settings().clone();
+    let preview = tokenstreak_core::state::merge_settings(&before, &patch)?;
+    if preview.popover_shortcut != before.popover_shortcut {
+        shortcut::apply(&app, preview.popover_shortcut.as_deref())?;
+    }
     let after = core.engine.lock().update_settings(&patch)?;
     if after.launch_at_login != before.launch_at_login {
         let r = if after.launch_at_login { app.autolaunch().enable() } else { app.autolaunch().disable() };
         if let Err(e) = r {
-            tracing::warn!("autostart: {e}");
+            tracing::warn!(error = %e, "launch at login could not be changed");
+        }
+        if let Some(m) = app.try_state::<tray::TrayMenu>() {
+            let _ = m.login.set_checked(app.autolaunch().is_enabled().unwrap_or(after.launch_at_login));
         }
     }
     if after.tools != before.tools || after.timezone != before.timezone {
@@ -122,6 +137,22 @@ pub fn get_app_info(app: AppHandle, core: State<'_, Core>) -> AppInfo {
 #[tauri::command]
 pub fn open_dashboard(app: AppHandle) {
     tray::show_dashboard(&app);
+}
+
+/// Opens the dashboard on its settings page (emits `open-settings` to it).
+#[tauri::command]
+pub fn open_settings(app: AppHandle) {
+    tray::show_settings(&app);
+}
+
+/// Reveals the app's log folder in Finder (for bug reports; logs hold counts
+/// and timings only).
+#[tauri::command]
+pub fn reveal_logs(app: AppHandle) -> Res<()> {
+    let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
+    let file = dir.join(crate::logging::FILE_NAME);
+    let target = if file.exists() { file } else { dir };
+    std::process::Command::new("open").arg("-R").arg(&target).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -18,14 +18,25 @@ tauri-build = { version = "~2.6", features = [] }
 [dependencies]
 tokenstreak-core = { path = "../crates/tokenstreak-core" }
 tauri = { version = "~2.11", features = ["tray-icon", "macos-private-api", "image-png"] }
-tauri-plugin-positioner = { version = "2", features = ["tray-icon"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "json"] }
 parking_lot = "0.12"
 base64 = "0.22"
 mimalloc = { version = "0.1", default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Sleep/wake and clock/time-zone change notifications (already in the tree via tao).
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSNotification", "NSOperation", "NSString", "NSDate", "NSTimeZone", "NSArray", "NSEnumerator", "NSGeometry", "block2"] }
+objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSScreen", "NSEvent", "NSGraphics"] }
+block2 = "0.6"
+
+[dev-dependencies]
+tempfile = "3"
