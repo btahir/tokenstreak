@@ -214,7 +214,7 @@ Full notices are in [CREDITS.md](CREDITS.md).
 
 ## Support this project
 
-Tokenstreak is free, with no locked features. If it makes your days with agents a little brighter, you can [support its development](https://shotcandy.vercel.app/support/). A star on GitHub helps too.
+Tokenstreak is free, with no locked features. If it makes your days with agents a little brighter, you can [support its development](https://shotcandy.app/support/). A star on GitHub helps too.
 
 ## License
 
